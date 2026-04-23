@@ -1,24 +1,39 @@
 #!/bin/bash
 set -e
 
+if [ "${COBIEN_ALLOW_SYSTEM_PROVISIONING:-}" != "yes" ]; then
+    echo "[ERROR] This script is blocked by default to prevent accidental execution on development machines."
+    echo "[ERROR] Run it only on a target CoBien furniture device with COBIEN_ALLOW_SYSTEM_PROVISIONING=yes."
+    exit 1
+fi
+
 ############################################################
 # CONFIGURATION
 ############################################################
 
-USER_NAME="$(whoami)"
-USER_HOME="$HOME"
+TARGET_USER="${SUDO_USER:-$USER}"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+
+if [ -z "$TARGET_USER" ] || [ -z "$TARGET_HOME" ]; then
+    echo "[ERROR] Unable to determine the target user and home directory."
+    exit 1
+fi
+
+USER_NAME="$TARGET_USER"
+USER_HOME="$TARGET_HOME"
 
 PROJECT_DIR="$USER_HOME/cobien"
 
-GIT_REMOTE_HOST="github-trabajo"
-
-FRONTEND_REPO="git@$GIT_REMOTE_HOST:DeustoTech/cobien_FrontEnd.git"
-MQTT_REPO="git@$GIT_REMOTE_HOST:DeustoTech/cobien_MQTT_Dictionnary.git"
+FRONTEND_REPO="git@github.com:DeustoTech/cobien_FrontEnd.git"
+MQTT_REPO="git@github.com:DeustoTech/cobien_MQTT_Dictionnary.git"
 
 BRANCH_NAME="development_fix"
 
 DISPLAY_OUTPUT="eDP-1"
 DISPLAY_MODE="1920x1200"
+
+echo "[INFO] Target user: $USER_NAME"
+echo "[INFO] Target home: $USER_HOME"
 
 ############################################################
 # INSTALL SYSTEM PACKAGES
