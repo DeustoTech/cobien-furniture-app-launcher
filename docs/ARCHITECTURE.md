@@ -81,7 +81,7 @@ Examples:
 
 - package installation
 - LightDM/Openbox configuration
-- SSH enablement
+- desktop session preparation
 - session startup preparation
 
 ### 2. Control layer

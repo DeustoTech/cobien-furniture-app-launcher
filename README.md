@@ -70,12 +70,12 @@ System bootstrap script for a fresh Ubuntu furniture device.
 
 It is responsible for:
 
-- installing system packages such as Openbox, LightDM, PipeWire, and SSH
+- installing system packages such as Openbox, LightDM, and PipeWire
 - selecting the invoking user as the target furniture user
 - configuring autologin into Openbox
 - creating the workspace directory
 - cloning or updating the runtime repositories
-- creating Openbox startup hooks for remote access tooling
+- creating Openbox startup hooks for the furniture graphical session and launcher handoff
 
 This script changes system state and must only be run on a target device.
 
