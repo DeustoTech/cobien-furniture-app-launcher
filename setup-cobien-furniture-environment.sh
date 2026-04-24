@@ -27,6 +27,7 @@ MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-cobien_MQTT_Dictionnary}"
 BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-master}"
 DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-eDP-1}"
 DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-1920x1200}"
+DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-inverted}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
 AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
 MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-}"
@@ -185,6 +186,7 @@ print_preflight_snapshot() {
     print_kv "MQTT repo" "$MQTT_REPO_NAME"
     print_kv "Display output" "$DISPLAY_OUTPUT"
     print_kv "Display mode" "$DISPLAY_MODE"
+    print_kv "Display rotation" "$DISPLAY_ROTATION"
     print_kv "RustDesk version" "$RUSTDESK_VERSION"
     print_kv "RustDesk enabled" "$INSTALL_RUSTDESK"
     print_kv "Deployment env" "${MASTER_ENV_FILE:-auto-discovered later}"
@@ -203,6 +205,7 @@ load_selected_env_settings() {
     BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-$BRANCH_NAME}"
     DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-$DISPLAY_OUTPUT}"
     DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-$DISPLAY_MODE}"
+    DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-$DISPLAY_ROTATION}"
     INSTALL_RUSTDESK="${COBIEN_INSTALL_RUSTDESK:-$INSTALL_RUSTDESK}"
     RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-$RUSTDESK_VERSION}"
     RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
@@ -375,7 +378,7 @@ write_openbox_autostart() {
 #!/usr/bin/env bash
 
 sleep 2
-xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} >/dev/null 2>&1 || true
+xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >/dev/null 2>&1 || true
 
 pgrep -u "${USER_NAME}" pipewire >/dev/null || pipewire >/tmp/cobien-pipewire.log 2>&1 &
 pgrep -u "${USER_NAME}" wireplumber >/dev/null || wireplumber >/tmp/cobien-wireplumber.log 2>&1 &
