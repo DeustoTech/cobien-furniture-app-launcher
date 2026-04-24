@@ -1636,6 +1636,10 @@ validate_runtime_file_dependencies() {
   [[ -f "$LAUNCHER_ROOT/import-systemd-user-env.sh" ]] || { log "session env import helper missing: $LAUNCHER_ROOT/import-systemd-user-env.sh"; exit 1; }
 }
 
+can_perform_privileged_installs() {
+  [[ "$MODE" == "setup" ]] && ! is_running_inside_systemd_user_service
+}
+
 checkout_branch() {
   local repo="$1"
   git -C "$repo" checkout "$BRANCH_NAME"
@@ -1692,6 +1696,11 @@ ensure_runtime_dependencies() {
 
   if [[ "${#missing_packages[@]}" -gt 0 ]]; then
     log "Missing runtime dependencies detected: ${missing_packages[*]}"
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Missing runtime dependencies cannot be installed during '$MODE'."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh so the installer can prepare the system before reboot."
+      return 1
+    fi
     log "Installing missing runtime dependencies (sudo may ask for password)..."
     sudo apt update
     apt_updated="1"
@@ -1699,6 +1708,11 @@ ensure_runtime_dependencies() {
   fi
 
   if ! command -v python3 >/dev/null 2>&1; then
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Python 3 base runtime is missing and cannot be installed during '$MODE'."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh to complete the installation."
+      return 1
+    fi
     log "Python 3 base runtime missing. Installing generic python3 package so uv can bootstrap the requested interpreter."
     if [[ "$apt_updated" != "1" ]]; then sudo apt update; apt_updated="1"; fi
     sudo apt install -y python3 python3-venv python3-pip
@@ -1903,6 +1917,11 @@ configure_tts_runtime() {
   elif command -v piper >/dev/null 2>&1; then
     TTS_PIPER_BIN="$(command -v piper)"
   else
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Piper TTS selected but no Piper binary is available during '$MODE'."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh so Piper is installed before the kiosk service starts."
+      return 1
+    fi
     log "Piper TTS selected but binary not found. Trying apt install..."
     sudo apt update || true
     sudo apt install -y piper-tts || true
@@ -2418,6 +2437,11 @@ ensure_mosquitto_running() {
   fi
 
   if ! command -v mosquitto >/dev/null 2>&1; then
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Mosquitto binary not found during '$MODE' and privileged installation is not allowed."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh to install the broker before reboot."
+      return
+    fi
     log "Mosquitto binary not found. Installing it now (sudo may ask for password)..."
     sudo apt update
     sudo apt install -y mosquitto mosquitto-clients
@@ -2434,13 +2458,16 @@ ensure_mosquitto_running() {
         return
       fi
 
-      log "Starting Mosquitto service"
-      if sudo systemctl enable --now mosquitto && sudo systemctl is-active --quiet mosquitto; then
-        log "Mosquitto started successfully via systemd"
-        return
+      if can_perform_privileged_installs; then
+        log "Starting Mosquitto service"
+        if sudo systemctl enable --now mosquitto && sudo systemctl is-active --quiet mosquitto; then
+          log "Mosquitto started successfully via systemd"
+          return
+        fi
+        log "Could not start Mosquitto via systemd, trying local process fallback"
+      else
+        log "Mosquitto system service is installed but inactive during '$MODE'; trying local process fallback without sudo"
       fi
-
-      log "Could not start Mosquitto via systemd, trying local process fallback"
     else
       log "mosquitto.service not found, using local process fallback"
     fi
