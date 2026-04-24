@@ -383,9 +383,9 @@ prompt_text() {
     fi
 
     if [[ -n "$default_value" ]]; then
-        printf '%b[INPUT]%b %s [%s]: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt" "$default_value"
+        printf '%b[INPUT]%b %s [%s]: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt" "$default_value" >&2
     else
-        printf '%b[INPUT]%b %s: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+        printf '%b[INPUT]%b %s: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt" >&2
     fi
     read -r answer
     if [[ -z "$answer" ]]; then
@@ -403,12 +403,37 @@ prompt_secret() {
         return 0
     fi
 
-    printf '%b[SECRET]%b %s: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+    printf '%b[SECRET]%b %s: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt" >&2
     read -r -s answer
-    printf '\n'
+    printf '\n' >&2
     printf '%s' "$answer"
 }
 
+normalize_admin_base_url() {
+    local raw_value="$1"
+    local normalized="${raw_value%%\?*}"
+    normalized="${normalized%%#*}"
+    normalized="${normalized%/}"
+
+    for suffix in \
+        "/pizarra/api/admin/devices" \
+        "/pizarra/api/admin/devices/" \
+        "/pizarra/api/admin" \
+        "/pizarra/api/admin/" \
+        "/pizarra/api" \
+        "/pizarra/api/" \
+        "/pizarra" \
+        "/pizarra/"
+    do
+        if [[ "$normalized" == *"$suffix" ]]; then
+            normalized="${normalized%"$suffix"}"
+            normalized="${normalized%/}"
+            break
+        fi
+    done
+
+    printf '%s' "$normalized"
+}
 render_online_device_choices() {
     local json_file="$1"
     python3 - "$json_file" <<'PY'
@@ -470,7 +495,7 @@ fetch_online_master_env_file() {
     fi
 
     ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
-    ADMIN_BASE_URL="${ADMIN_BASE_URL%/}"
+    ADMIN_BASE_URL="$(normalize_admin_base_url "$ADMIN_BASE_URL")"
     ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
     if [[ -z "$ADMIN_PASSWORD" ]]; then
         ADMIN_PASSWORD="$(prompt_secret "Admin password")"
@@ -481,6 +506,7 @@ fetch_online_master_env_file() {
         return 0
     fi
 
+    log INFO "Using CoBien admin base URL: ${ADMIN_BASE_URL}"
     devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
     tmp_json="$(mktemp)"
 
