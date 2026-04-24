@@ -7,7 +7,7 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 WorkingDirectory=%h/cobien/cobien-furniture-app-launcher
-ExecStart=/bin/bash %h/cobien/cobien-furniture-app-launcher/cobien-launcher.sh --mode launch --non-interactive --yes --workspace %h/cobien --frontend-name cobien_FrontEnd --mqtt-name cobien_MQTT_Dictionnary --branch development_fix
+ExecStart=/bin/bash %h/cobien/cobien-furniture-app-launcher/cobien-launcher.sh --mode launch --non-interactive --yes --workspace %h/cobien --frontend-name cobien_FrontEnd --mqtt-name cobien_MQTT_Dictionnary --branch master
 Restart=always
 RestartSec=5
 KillMode=mixed

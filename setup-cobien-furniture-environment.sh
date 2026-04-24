@@ -27,7 +27,7 @@ PROJECT_DIR="$USER_HOME/cobien"
 FRONTEND_REPO="git@github.com:DeustoTech/cobien_FrontEnd.git"
 MQTT_REPO="git@github.com:DeustoTech/cobien_MQTT_Dictionnary.git"
 
-BRANCH_NAME="development_fix"
+BRANCH_NAME="master"
 
 DISPLAY_OUTPUT="eDP-1"
 DISPLAY_MODE="1920x1200"
