@@ -61,6 +61,7 @@ COLOR_ACCENT=""
 CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
 STEP_TOTAL=10
+ONLINE_ENV_FETCHED=0
 
 init_colors() {
     if [[ -t 1 && "${NO_COLOR:-0}" != "1" ]]; then
@@ -565,6 +566,7 @@ PY
 
     MASTER_ENV_FILE="$target_env"
     FETCH_CONFIG_ONLINE="1"
+    ONLINE_ENV_FETCHED=1
     load_selected_env_settings
     log OK "Downloaded the online deployment env for ${selected_device} into ${target_env}"
     return 0
@@ -788,9 +790,13 @@ main() {
     load_selected_env_settings
     print_preflight_snapshot
 
-    if ! confirm "Continue with the full furniture environment setup?"; then
-        log WARN "Setup cancelled by the user."
-        exit 0
+    if [[ "$ONLINE_ENV_FETCHED" == "1" ]]; then
+        log INFO "Online deployment env downloaded successfully. Continuing with unattended setup."
+    else
+        if ! confirm "Continue with the full furniture environment setup?"; then
+            log WARN "Setup cancelled by the user."
+            exit 0
+        fi
     fi
 
     phase "Checking prerequisites" "Verifying the installer tools and the selected deployment env before changing the system."
