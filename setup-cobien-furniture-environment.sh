@@ -31,6 +31,11 @@ DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-inverted}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
 AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
 MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-}"
+FETCH_CONFIG_ONLINE="${COBIEN_FETCH_CONFIG_ONLINE:-0}"
+ADMIN_BASE_URL="${COBIEN_ADMIN_BASE_URL:-https://portal.co-bien.eu}"
+ADMIN_USERNAME="${COBIEN_ADMIN_USERNAME:-}"
+ADMIN_PASSWORD="${COBIEN_ADMIN_PASSWORD:-}"
+TARGET_DEVICE_ID="${COBIEN_TARGET_DEVICE_ID:-}"
 INSTALL_RUSTDESK="${COBIEN_INSTALL_RUSTDESK:-1}"
 RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-1.4.6}"
 RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
@@ -171,7 +176,8 @@ print_intro_panel() {
     if [[ -n "$MASTER_ENV_FILE" ]]; then
         print_status_badge OK "Deployment env preselected: ${MASTER_ENV_FILE}"
     else
-        print_status_badge WARN "No deployment env was passed yet; the launcher will use its normal discovery flow"
+        print_status_badge INFO "You can fetch a fully generated furniture env from the CoBien admin before installation"
+        print_status_badge WARN "No deployment env was passed yet; the installer will offer online and local discovery flows"
     fi
     echo
 }
@@ -187,6 +193,7 @@ print_preflight_snapshot() {
     print_kv "Display output" "$DISPLAY_OUTPUT"
     print_kv "Display mode" "$DISPLAY_MODE"
     print_kv "Display rotation" "$DISPLAY_ROTATION"
+    print_kv "Admin base URL" "$ADMIN_BASE_URL"
     print_kv "RustDesk version" "$RUSTDESK_VERSION"
     print_kv "RustDesk enabled" "$INSTALL_RUSTDESK"
     print_kv "Deployment env" "${MASTER_ENV_FILE:-auto-discovered later}"
@@ -245,6 +252,12 @@ discover_env_candidates() {
 }
 
 choose_master_env_file() {
+    fetch_online_master_env_file
+
+    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
+        return 0
+    fi
+
     discover_env_candidates
 
     if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
@@ -309,6 +322,20 @@ preflight_checks() {
         missing=1
     fi
 
+    if command -v python3 >/dev/null 2>&1; then
+        print_status_badge OK "python3 is available"
+    else
+        print_status_badge ERROR "python3 is missing"
+        missing=1
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        print_status_badge OK "curl is available"
+    else
+        print_status_badge ERROR "curl is missing"
+        missing=1
+    fi
+
     if [[ -x "$SCRIPT_DIR/cobien-launcher.sh" ]]; then
         print_status_badge OK "cobien-launcher.sh is present"
     else
@@ -343,6 +370,176 @@ confirm() {
             n|no|"") return 1 ;;
         esac
     done
+}
+
+prompt_text() {
+    local prompt="$1"
+    local default_value="${2:-}"
+    local answer=""
+
+    if [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
+        printf '%s' "$default_value"
+        return 0
+    fi
+
+    if [[ -n "$default_value" ]]; then
+        printf '%b[INPUT]%b %s [%s]: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt" "$default_value"
+    else
+        printf '%b[INPUT]%b %s: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+    fi
+    read -r answer
+    if [[ -z "$answer" ]]; then
+        answer="$default_value"
+    fi
+    printf '%s' "$answer"
+}
+
+prompt_secret() {
+    local prompt="$1"
+    local answer=""
+
+    if [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
+        printf '%s' "$ADMIN_PASSWORD"
+        return 0
+    fi
+
+    printf '%b[SECRET]%b %s: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+    read -r -s answer
+    printf '\n'
+    printf '%s' "$answer"
+}
+
+render_online_device_choices() {
+    local json_file="$1"
+    python3 - "$json_file" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+devices = payload.get("devices") or []
+for idx, item in enumerate(devices, 1):
+    device_id = str(item.get("device_id") or "").strip()
+    display_name = str(item.get("display_name") or device_id).strip()
+    status = str(item.get("status") or "unknown").strip()
+    enabled = "enabled" if item.get("enabled", True) else "disabled"
+    hidden = "hidden" if item.get("hidden_in_admin") else "visible"
+    room = str(item.get("videocall_room") or device_id).strip()
+    print(f"  {idx}. {display_name} [{device_id}] · room {room} · {status} · {enabled} · {hidden}")
+PY
+}
+
+device_id_from_selection() {
+    local json_file="$1"
+    local selection="$2"
+    python3 - "$json_file" "$selection" <<'PY'
+import json, sys
+path, raw_selection = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+devices = payload.get("devices") or []
+try:
+    index = int(raw_selection)
+except Exception:
+    sys.exit(1)
+if index < 1 or index > len(devices):
+    sys.exit(1)
+device_id = str(devices[index - 1].get("device_id") or "").strip()
+if not device_id:
+    sys.exit(1)
+print(device_id)
+PY
+}
+
+fetch_online_master_env_file() {
+    local should_fetch="${FETCH_CONFIG_ONLINE}"
+    local devices_url
+    local device_env_url
+    local tmp_json
+    local selection=""
+    local selected_device=""
+    local target_env="$SCRIPT_DIR/cobien.env"
+
+    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
+        return 0
+    fi
+
+    if [[ "$should_fetch" != "1" ]]; then
+        if ! confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
+            return 0
+        fi
+    fi
+
+    ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
+    ADMIN_BASE_URL="${ADMIN_BASE_URL%/}"
+    ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
+    if [[ -z "$ADMIN_PASSWORD" ]]; then
+        ADMIN_PASSWORD="$(prompt_secret "Admin password")"
+    fi
+
+    if [[ -z "$ADMIN_BASE_URL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
+        log WARN "Online configuration skipped because the admin URL or credentials are incomplete."
+        return 0
+    fi
+
+    devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
+    tmp_json="$(mktemp)"
+
+    animate "Connecting to the CoBien admin and downloading the furniture list"
+    if ! curl -fsS -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" "$devices_url" -o "$tmp_json"; then
+        rm -f "$tmp_json"
+        log WARN "The online furniture list could not be downloaded. Falling back to local env discovery."
+        return 0
+    fi
+
+    if [[ -n "$TARGET_DEVICE_ID" ]]; then
+        selected_device="$TARGET_DEVICE_ID"
+    elif [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
+        selected_device="$(python3 - "$tmp_json" <<'PY'
+import json, sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+devices = payload.get("devices") or []
+print(str(devices[0].get("device_id") or "").strip() if devices else "")
+PY
+)"
+    else
+        echo
+        printf '%b%s%b\n' "$COLOR_BOLD" "Available furniture devices in the CoBien admin" "$COLOR_RESET"
+        render_online_device_choices "$tmp_json"
+        echo "  0. Continue without downloading an online configuration"
+        echo
+        while true; do
+            printf '%b[SELECT]%b Choose the furniture to configure [0-n]: ' "$COLOR_YELLOW" "$COLOR_RESET"
+            read -r selection
+            if [[ "$selection" == "0" || -z "$selection" ]]; then
+                rm -f "$tmp_json"
+                return 0
+            fi
+            if selected_device="$(device_id_from_selection "$tmp_json" "$selection" 2>/dev/null)"; then
+                break
+            fi
+        done
+    fi
+
+    rm -f "$tmp_json"
+
+    if [[ -z "$selected_device" ]]; then
+        log WARN "No online furniture device was selected. Falling back to local env discovery."
+        return 0
+    fi
+
+    device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
+    animate "Downloading the complete cobien.env for ${selected_device}"
+    if ! curl -fsS -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" "$device_env_url" -o "$target_env"; then
+        log WARN "The online configuration for ${selected_device} could not be downloaded."
+        return 0
+    fi
+
+    MASTER_ENV_FILE="$target_env"
+    FETCH_CONFIG_ONLINE="1"
+    load_selected_env_settings
+    log OK "Downloaded the online deployment env for ${selected_device} into ${target_env}"
+    return 0
 }
 
 run_cmd() {
