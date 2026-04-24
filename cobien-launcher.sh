@@ -1630,10 +1630,10 @@ validate_runtime_file_dependencies() {
   set_phase "validate-runtime-files"
   check_paths
   local service_dir="$LAUNCHER_ROOT/systemd"
-  [[ -f "$LAUNCHER_ROOT/install-systemd-user.sh" ]] || { log "systemd installer missing: $LAUNCHER_ROOT/install-systemd-user.sh"; exit 1; }
   [[ -f "$service_dir/cobien-launcher.service" ]] || { log "systemd launcher unit missing: $service_dir/cobien-launcher.service"; exit 1; }
   [[ -f "$service_dir/cobien-update.service" ]] || { log "systemd update unit missing: $service_dir/cobien-update.service"; exit 1; }
   [[ -f "$service_dir/cobien-update.timer" ]] || { log "systemd update timer missing: $service_dir/cobien-update.timer"; exit 1; }
+  [[ -f "$LAUNCHER_ROOT/import-systemd-user-env.sh" ]] || { log "session env import helper missing: $LAUNCHER_ROOT/import-systemd-user-env.sh"; exit 1; }
 }
 
 checkout_branch() {
@@ -2965,20 +2965,64 @@ install_cron_job() {
 }
 
 install_systemd_user_services() {
-  local installer_script="$LAUNCHER_ROOT/install-systemd-user.sh"
-  if [[ ! -x "$installer_script" ]]; then
-    if [[ -f "$installer_script" ]]; then
-      chmod +x "$installer_script" || true
-    fi
-  fi
-
-  if [[ ! -x "$installer_script" ]]; then
-    log "systemd installer not found or not executable: $installer_script"
-    return 1
-  fi
-
   log "Installing/updating systemd user services..."
-  /bin/bash "$installer_script"
+  local systemd_src_dir="$LAUNCHER_ROOT/systemd"
+  local systemd_user_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  local systemd_override_dir="$systemd_user_dir/cobien-launcher.service.d"
+  local autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+  local autostart_file="$autostart_dir/cobien-import-session-env.desktop"
+  local openbox_dir="${XDG_CONFIG_HOME:-$HOME/.config}/openbox"
+  local openbox_autostart_file="$openbox_dir/autostart"
+  local openbox_sentinel="# CoBien session env import"
+  local timers_wants_dir="$systemd_user_dir/timers.target.wants"
+  local graphical_wants_dir="$systemd_user_dir/graphical-session.target.wants"
+
+  mkdir -p "$systemd_user_dir" "$autostart_dir" "$openbox_dir" "$timers_wants_dir" "$graphical_wants_dir"
+
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl enable-linger "$USER" >/dev/null 2>&1 || true
+    log "Enabled linger for user: $USER"
+  fi
+
+  install -m 0644 "$systemd_src_dir/cobien-launcher.service" "$systemd_user_dir/cobien-launcher.service"
+  install -m 0644 "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
+  install -m 0644 "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
+  rm -rf "$systemd_override_dir"
+
+  cat > "$autostart_file" <<EOF
+[Desktop Entry]
+Type=Application
+Name=CoBien Session Env Import
+Comment=Import GNOME/XFCE/Openbox graphical environment into systemd user services
+Exec=/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
+X-XFCE-Autostart-enabled=true
+X-MATE-Autostart-enabled=true
+NoDisplay=true
+Terminal=false
+EOF
+
+  if [[ ! -f "$openbox_autostart_file" ]]; then
+    cat > "$openbox_autostart_file" <<EOF
+$openbox_sentinel
+/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh &
+EOF
+  elif ! grep -Fq "$openbox_sentinel" "$openbox_autostart_file"; then
+    printf '\n%s\n%s\n' "$openbox_sentinel" "/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh &" >> "$openbox_autostart_file"
+  fi
+
+  if crontab -l >/dev/null 2>&1; then
+    crontab -l | grep -v 'cobien-launcher.sh --mode update-once' | crontab - || true
+  fi
+
+  ln -sfn ../cobien-launcher.service "$graphical_wants_dir/cobien-launcher.service"
+  ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
+
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  systemctl --user enable --now cobien-launcher.service >/dev/null 2>&1 || true
+  systemctl --user enable --now cobien-update.timer >/dev/null 2>&1 || true
+  systemctl --user restart cobien-launcher.service >/dev/null 2>&1 || true
 }
 
 has_systemd_user_launcher_service() {
@@ -3106,7 +3150,7 @@ print_diagnostics() {
   print_file_status "Pyproject" "$FRONTEND_APP_DIR/pyproject.toml"
   print_file_status "Bridge dir" "$BRIDGE_DIR" dir
   print_file_status "CAN config" "$CAN_CONFIG"
-  print_file_status "Systemd installer" "$LAUNCHER_ROOT/install-systemd-user.sh"
+  print_file_status "Session env helper" "$LAUNCHER_ROOT/import-systemd-user-env.sh"
 
   if [[ -f "$ENV_FILE" ]]; then
     log "--- ENV_FILE contents ---"

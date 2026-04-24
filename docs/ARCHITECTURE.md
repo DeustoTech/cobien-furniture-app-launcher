@@ -71,7 +71,7 @@ These assumptions are acceptable during migration, but they should not define th
 
 ## Target architecture
 
-The target model is a three-layer design.
+The target model is a three-layer design, but with a single official operator entrypoint.
 
 ### 1. Bootstrap layer
 
@@ -92,12 +92,18 @@ Lives in this repository and owns the lifecycle of the device software.
 
 Examples:
 
-- launcher entrypoint
+- internal launcher/runtime entrypoint
 - repository synchronization
 - version coordination
 - runtime env generation
 - service installation and supervision
 - rollout and restart behavior
+
+The supported human-facing entrypoint for this layer is:
+
+- `setup-cobien-furniture-environment.sh`
+
+Everything else should behave as internal plumbing or compatibility glue.
 
 ### 3. Runtime layer
 
@@ -187,3 +193,13 @@ Introduce a coordinated version or manifest model for multi-repository releases.
 Today, this repository is already the correct home for installation, update, and launch logic.
 
 What remains is to finish the decoupling work so that runtime repositories are treated as payloads rather than partial deployment owners.
+
+## Current direction
+
+The repository is now intentionally converging on:
+
+- one official deployment script for humans
+- one internal runtime controller for services and maintenance
+- zero mandatory auxiliary scripts in the normal installation path
+
+That means helper scripts may still exist for compatibility, but they should not define the architecture.
