@@ -29,8 +29,12 @@ DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-eDP-1}"
 DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-1920x1200}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
 AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
-RUN_LAUNCHER_AFTER_SETUP="${COBIEN_RUN_LAUNCHER_AFTER_SETUP:-1}"
 MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-}"
+INSTALL_RUSTDESK="${COBIEN_INSTALL_RUSTDESK:-1}"
+RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-1.4.6}"
+RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
+RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:---tray}"
+AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
 
 FRONTEND_REPO="git@github.com:DeustoTech/${FRONTEND_REPO_NAME}.git"
 MQTT_REPO="git@github.com:DeustoTech/${MQTT_REPO_NAME}.git"
@@ -50,9 +54,7 @@ COLOR_ACCENT=""
 
 CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
-STEP_TOTAL=7
-LAUNCHER_EXECUTED=0
-LAUNCHER_EXIT_CODE=0
+STEP_TOTAL=10
 
 init_colors() {
     if [[ -t 1 && "${NO_COLOR:-0}" != "1" ]]; then
@@ -160,6 +162,11 @@ print_intro_panel() {
     print_status_badge INFO "Target user detected automatically"
     print_status_badge INFO "Desktop session will be prepared for Openbox + LightDM"
     print_status_badge INFO "Repositories will be synced on branch ${BRANCH_NAME}"
+    if [[ "$INSTALL_RUSTDESK" == "1" ]]; then
+        print_status_badge INFO "RustDesk ${RUSTDESK_VERSION} will be installed and added to autostart"
+    else
+        print_status_badge WARN "RustDesk installation is disabled by configuration"
+    fi
     if [[ -n "$MASTER_ENV_FILE" ]]; then
         print_status_badge OK "Deployment env preselected: ${MASTER_ENV_FILE}"
     else
@@ -178,8 +185,32 @@ print_preflight_snapshot() {
     print_kv "MQTT repo" "$MQTT_REPO_NAME"
     print_kv "Display output" "$DISPLAY_OUTPUT"
     print_kv "Display mode" "$DISPLAY_MODE"
+    print_kv "RustDesk version" "$RUSTDESK_VERSION"
+    print_kv "RustDesk enabled" "$INSTALL_RUSTDESK"
     print_kv "Deployment env" "${MASTER_ENV_FILE:-auto-discovered later}"
     echo
+}
+
+load_selected_env_settings() {
+    [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]] || return 0
+    set -a
+    source "$MASTER_ENV_FILE"
+    set +a
+
+    PROJECT_DIR="${COBIEN_WORKSPACE_ROOT:-$PROJECT_DIR}"
+    FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
+    MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-$MQTT_REPO_NAME}"
+    BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-$BRANCH_NAME}"
+    DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-$DISPLAY_OUTPUT}"
+    DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-$DISPLAY_MODE}"
+    INSTALL_RUSTDESK="${COBIEN_INSTALL_RUSTDESK:-$INSTALL_RUSTDESK}"
+    RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-$RUSTDESK_VERSION}"
+    RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
+    RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:-$RUSTDESK_ARGS}"
+    AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-$AUTO_REBOOT_AFTER_SETUP}"
+
+    FRONTEND_REPO="git@github.com:DeustoTech/${FRONTEND_REPO_NAME}.git"
+    MQTT_REPO="git@github.com:DeustoTech/${MQTT_REPO_NAME}.git"
 }
 
 add_env_candidate() {
@@ -224,6 +255,7 @@ choose_master_env_file() {
 
     if [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
         MASTER_ENV_FILE="${ENV_CANDIDATES[0]}"
+        load_selected_env_settings
         log INFO "Using deployment env automatically: $MASTER_ENV_FILE"
         return 0
     fi
@@ -249,6 +281,7 @@ choose_master_env_file() {
         fi
         if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= ${#ENV_CANDIDATES[@]} )); then
             MASTER_ENV_FILE="${ENV_CANDIDATES[$((selection - 1))]}"
+            load_selected_env_settings
             log OK "Selected deployment env: $MASTER_ENV_FILE"
             return 0
         fi
@@ -350,6 +383,10 @@ pgrep -u "${USER_NAME}" wireplumber >/dev/null || wireplumber >/tmp/cobien-wirep
 if [ -x "${SCRIPT_DIR}/import-systemd-user-env.sh" ]; then
   "${SCRIPT_DIR}/import-systemd-user-env.sh" >/tmp/cobien-import-session-env.log 2>&1 || true
 fi
+
+if [ "${INSTALL_RUSTDESK}" = "1" ] && [ -x "/usr/bin/rustdesk" ]; then
+  pgrep -u "${USER_NAME}" -x rustdesk >/dev/null || /usr/bin/rustdesk ${RUSTDESK_ARGS} >/tmp/cobien-rustdesk.log 2>&1 &
+fi
 EOF
 
     chmod +x "$USER_HOME/.config/openbox/autostart"
@@ -369,6 +406,112 @@ disable_other_display_managers() {
     sudo systemctl disable sddm 2>/dev/null || true
 }
 
+install_rustdesk() {
+    if [[ "$INSTALL_RUSTDESK" != "1" ]]; then
+        log INFO "RustDesk installation skipped by configuration."
+        return 0
+    fi
+
+    local deb_path="/tmp/rustdesk-${RUSTDESK_VERSION}-x86_64.deb"
+    run_cmd "Downloading RustDesk ${RUSTDESK_VERSION}" curl -fL "$RUSTDESK_URL" -o "$deb_path"
+    run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo apt install -y "$deb_path"
+
+    if [[ ! -x /usr/bin/rustdesk ]]; then
+        log ERROR "RustDesk was not found at /usr/bin/rustdesk after installation."
+        return 1
+    fi
+
+    print_status_badge OK "RustDesk ${RUSTDESK_VERSION} installed"
+}
+
+install_systemd_user_units() {
+    local systemd_src_dir="$SCRIPT_DIR/systemd"
+    local systemd_user_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    local systemd_override_dir="$systemd_user_dir/cobien-launcher.service.d"
+    local autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+    local autostart_file="$autostart_dir/cobien-import-session-env.desktop"
+    local timers_wants_dir="$systemd_user_dir/timers.target.wants"
+    local graphical_wants_dir="$systemd_user_dir/graphical-session.target.wants"
+
+    mkdir -p "$systemd_user_dir" "$autostart_dir" "$timers_wants_dir" "$graphical_wants_dir"
+
+    if command -v loginctl >/dev/null 2>&1; then
+        loginctl enable-linger "$USER" || true
+        print_status_badge OK "Enabled linger for user: $USER"
+    fi
+
+    install -m 0644 "$systemd_src_dir/cobien-launcher.service" "$systemd_user_dir/cobien-launcher.service"
+    install -m 0644 "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
+    install -m 0644 "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
+    rm -rf "$systemd_override_dir"
+
+    cat > "$autostart_file" <<EOF
+[Desktop Entry]
+Type=Application
+Name=CoBien Session Env Import
+Comment=Import graphical session variables into systemd user services
+Exec=/bin/bash $SCRIPT_DIR/import-systemd-user-env.sh
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
+X-XFCE-Autostart-enabled=true
+X-MATE-Autostart-enabled=true
+NoDisplay=true
+Terminal=false
+EOF
+
+    ln -sfn ../cobien-launcher.service "$graphical_wants_dir/cobien-launcher.service"
+    ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
+
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    systemctl --user enable cobien-launcher.service cobien-update.timer >/dev/null 2>&1 || true
+
+    print_status_badge OK "Systemd user units installed"
+    print_status_badge OK "Graphical session import hook installed"
+}
+
+run_launcher_setup_mode() {
+    local launcher_cmd=(
+        "$SCRIPT_DIR/cobien-launcher.sh"
+        --mode setup
+        --non-interactive
+        --yes
+        --workspace "$PROJECT_DIR"
+        --frontend-name "$FRONTEND_REPO_NAME"
+        --mqtt-name "$MQTT_REPO_NAME"
+        --branch "$BRANCH_NAME"
+    )
+
+    animate "Preparing the CoBien runtime with cobien-launcher.sh"
+    if [[ -n "$MASTER_ENV_FILE" ]]; then
+        COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
+    else
+        "${launcher_cmd[@]}"
+    fi
+}
+
+finalize_with_reboot() {
+    echo
+    print_rule
+    printf '%b%s%b\n' "$COLOR_BOLD$COLOR_BLUE" "The furniture is fully prepared." "$COLOR_RESET"
+    print_status_badge OK "The application runtime has been prepared but not launched yet"
+    print_status_badge OK "Systemd user services are installed and enabled for the next login"
+    if [[ "$INSTALL_RUSTDESK" == "1" ]]; then
+        print_status_badge OK "RustDesk will be started automatically by Openbox after reboot"
+    fi
+    echo
+    echo "The device now needs a reboot so that Openbox autologin, RustDesk and the CoBien runtime"
+    echo "come up naturally in the new session."
+    echo
+
+    if [[ "$AUTO_REBOOT_AFTER_SETUP" == "1" ]]; then
+        print_status_badge INFO "The system will reboot in 10 seconds. Press Ctrl+C now if you want to stop it."
+        sleep 10
+        sudo reboot
+    else
+        print_status_badge INFO "Automatic reboot disabled. Run 'sudo reboot' when you are ready."
+    fi
+}
+
 print_summary() {
     echo
     print_rule
@@ -380,6 +523,9 @@ print_summary() {
     print_status_badge OK "Repositories synchronized"
     print_status_badge OK "Desktop session configured"
     print_status_badge OK "Openbox session validated"
+    if [[ "$INSTALL_RUSTDESK" == "1" ]]; then
+        print_status_badge OK "RustDesk installed"
+    fi
     echo
     print_kv "Target user" "$USER_NAME"
     print_kv "Target home" "$USER_HOME"
@@ -388,6 +534,7 @@ print_summary() {
     print_kv "Frontend repo" "$PROJECT_DIR/$FRONTEND_REPO_NAME"
     print_kv "MQTT repo" "$PROJECT_DIR/$MQTT_REPO_NAME"
     print_kv "Desktop session" "Openbox via LightDM autologin"
+    print_kv "RustDesk version" "$RUSTDESK_VERSION"
     print_kv "Deployment env" "${MASTER_ENV_FILE:-auto-discovered by launcher}"
     echo
 }
@@ -410,6 +557,7 @@ main() {
     print_banner
     print_intro_panel
     choose_master_env_file
+    load_selected_env_settings
     print_preflight_snapshot
 
     if ! confirm "Continue with the full furniture environment setup?"; then
@@ -427,6 +575,7 @@ main() {
     run_cmd "Updating apt metadata" sudo apt update
     run_cmd "Installing required packages" sudo apt install -y \
         git \
+        curl \
         openbox \
         lightdm \
         tint2 \
@@ -456,61 +605,18 @@ main() {
     fi
     log OK "Openbox session file detected."
 
+    phase "Installing RustDesk" "The remote support tool will be installed and wired into the graphical session."
+    install_rustdesk
+
+    phase "Preparing the application runtime" "Running cobien-launcher in setup mode so the runtime is fully ready before reboot."
+    run_launcher_setup_mode
+
+    phase "Installing user services" "Registering CoBien systemd user units without starting the runtime in this session."
+    install_systemd_user_units
+
     print_summary
-
-    if [[ "$RUN_LAUNCHER_AFTER_SETUP" == "1" ]]; then
-        phase "Handing off to the application launcher" "The base system is ready; the launcher can now complete the furniture deployment."
-        if [[ -z "$MASTER_ENV_FILE" ]]; then
-            log WARN "COBIEN_MASTER_ENV_FILE is not set. The launcher will use its normal discovery flow."
-        else
-            log INFO "Launcher will use: $MASTER_ENV_FILE"
-        fi
-
-        if confirm "Run cobien-launcher.sh now to continue the furniture deployment?"; then
-            local launcher_cmd=("$SCRIPT_DIR/cobien-launcher.sh")
-            if [[ "$NON_INTERACTIVE" == "1" ]]; then
-                launcher_cmd+=(--non-interactive)
-            fi
-            if [[ "$AUTO_CONFIRM" == "1" ]]; then
-                launcher_cmd+=(--yes)
-            fi
-            animate "Starting the CoBien launcher"
-            LAUNCHER_EXECUTED=1
-            if [[ -n "$MASTER_ENV_FILE" ]]; then
-                COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
-                LAUNCHER_EXIT_CODE=$?
-            else
-                "${launcher_cmd[@]}"
-                LAUNCHER_EXIT_CODE=$?
-            fi
-        else
-            log INFO "Launcher step skipped for now."
-        fi
-    fi
-
-    echo
-    print_rule
-    printf '%b%s%b\n' "$COLOR_BOLD$COLOR_BLUE" "Everything is ready." "$COLOR_RESET"
-    if [[ "$LAUNCHER_EXECUTED" == "1" ]]; then
-        if [[ "$LAUNCHER_EXIT_CODE" == "0" ]]; then
-            print_status_badge OK "The launcher finished successfully during this guided setup"
-        else
-            print_status_badge WARN "The launcher was started but did not finish cleanly"
-        fi
-    else
-        print_status_badge INFO "The base environment is ready; the application launcher has not been run yet"
-        if [[ -n "$MASTER_ENV_FILE" ]]; then
-            echo "To continue later:"
-            echo "  COBIEN_MASTER_ENV_FILE=\"$MASTER_ENV_FILE\" \"$SCRIPT_DIR/cobien-launcher.sh\""
-        else
-            echo "To continue later:"
-            echo "  \"$SCRIPT_DIR/cobien-launcher.sh\""
-        fi
-    fi
-    echo "When you want the graphical session to be applied cleanly, reboot the furniture device."
-    echo
-    print_status_badge INFO "Suggested next command: sudo reboot"
-    echo
+    phase "Finalizing installation" "Reviewing the result and handing off to the reboot that will activate the full furniture session."
+    finalize_with_reboot
 }
 
 main "$@"

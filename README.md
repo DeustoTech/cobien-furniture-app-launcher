@@ -75,7 +75,10 @@ It is responsible for:
 - configuring autologin into Openbox
 - creating the workspace directory
 - cloning or updating the runtime repositories
+- installing RustDesk and wiring it into the Openbox session
 - creating Openbox startup hooks for the furniture graphical session and launcher handoff
+- preparing the CoBien runtime in setup mode without launching it immediately
+- installing the user-level systemd units so the app starts naturally after reboot
 
 This script changes system state and must only be run on a target device.
 
