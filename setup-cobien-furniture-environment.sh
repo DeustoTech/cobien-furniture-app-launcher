@@ -63,6 +63,18 @@ CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
 STEP_TOTAL=10
 ONLINE_ENV_FETCHED=0
+BOOTSTRAP_APT_PACKAGES=(
+    git
+    curl
+    openbox
+    lightdm
+    tint2
+    xterm
+    x11-xserver-utils
+    wmctrl
+    pipewire
+    wireplumber
+)
 
 init_colors() {
     if [[ -t 1 && "${NO_COLOR:-0}" != "1" ]]; then
@@ -582,6 +594,35 @@ run_cmd() {
     "$@"
 }
 
+installed_apt_package_version() {
+    local package_name="$1"
+    dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true
+}
+
+install_missing_bootstrap_packages() {
+    local missing_packages=()
+    local package_name
+    local version
+
+    for package_name in "${BOOTSTRAP_APT_PACKAGES[@]}"; do
+        version="$(installed_apt_package_version "$package_name")"
+        if [[ -n "$version" ]]; then
+            print_status_badge OK "Package already installed: ${package_name} (${version})"
+        else
+            missing_packages+=("$package_name")
+        fi
+    done
+
+    if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+        log INFO "All required bootstrap packages are already installed."
+        return 0
+    fi
+
+    log INFO "Missing bootstrap packages: ${missing_packages[*]}"
+    run_cmd "Updating apt metadata" sudo apt update
+    run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
+}
+
 ensure_repo() {
     local repo_dir="$1"
     local repo_url="$2"
@@ -670,6 +711,13 @@ disable_other_display_managers() {
 install_rustdesk() {
     if [[ "$INSTALL_RUSTDESK" != "1" ]]; then
         log INFO "RustDesk installation skipped by configuration."
+        return 0
+    fi
+
+    local installed_version=""
+    installed_version="$(installed_apt_package_version "rustdesk")"
+    if [[ -n "$installed_version" && "$installed_version" == "$RUSTDESK_VERSION"* && -x /usr/bin/rustdesk ]]; then
+        print_status_badge OK "RustDesk ${installed_version} already installed"
         return 0
     fi
 
@@ -837,19 +885,8 @@ main() {
         exit 1
     fi
 
-    phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be installed."
-    run_cmd "Updating apt metadata" sudo apt update
-    run_cmd "Installing required packages" sudo apt install -y \
-        git \
-        curl \
-        openbox \
-        lightdm \
-        tint2 \
-        xterm \
-        x11-xserver-utils \
-        wmctrl \
-        pipewire \
-        wireplumber
+    phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be verified and installed only when missing."
+    install_missing_bootstrap_packages
 
     phase "Preparing workspace" "The furniture repositories will live under the target workspace."
     run_cmd "Creating workspace directory" mkdir -p "$PROJECT_DIR"

@@ -1640,37 +1640,71 @@ can_perform_privileged_installs() {
   [[ "$MODE" == "setup" ]] && ! is_running_inside_systemd_user_service
 }
 
+installed_apt_package_version() {
+  local package_name="$1"
+  dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true
+}
+
+append_missing_apt_package() {
+  local package_name="$1"
+  local target_array_name="$2"
+  local current_version=""
+
+  current_version="$(installed_apt_package_version "$package_name")"
+  if [[ -n "$current_version" ]]; then
+    log "APT: Reusing installed package '$package_name' ($current_version)"
+    return 0
+  fi
+
+  eval "case \" \${${target_array_name}[*]} \" in *\" ${package_name} \"*) ;; *) ${target_array_name}+=(\"${package_name}\") ;; esac"
+}
+
 checkout_branch() {
   local repo="$1"
   git -C "$repo" checkout "$BRANCH_NAME"
 }
 
 install_system_deps_fn() {
+  local required_packages=(
+    git curl wget build-essential cmake pkg-config
+    python3 python3-venv python3-pip
+    wmctrl gnome-terminal can-utils iproute2 xclip xsel
+    alsa-utils
+    pulseaudio-utils pipewire-pulse wireplumber pavucontrol
+    mosquitto mosquitto-clients
+    libasound2-dev portaudio19-dev
+    libgl1 libegl1 libglib2.0-0
+    libgstreamer1.0-0 gstreamer1.0-plugins-base
+    gstreamer1.0-plugins-good gstreamer1.0-libav
+    libpulse0 libmosquitto-dev libcjson-dev
+    libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4
+    libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0
+    libxcomposite1 libxdamage1 libxrandr2 libnss3
+    libatk-bridge2.0-0 libgtk-3-0
+  )
+  local missing_packages=()
+  local package_name
+
   if [[ "$INSTALL_SYSTEM_DEPS" != "1" ]]; then
     log "Skipping system dependencies"
     return
   fi
 
+  for package_name in "${required_packages[@]}"; do
+    append_missing_apt_package "$package_name" missing_packages
+  done
+
+  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    log "APT: All launcher system dependencies are already installed."
+    return
+  fi
+
   log_phase_banner "System dependencies" "Installing OS packages required by the launcher, audio stack, GTK/WebRTC runtime and build tools."
+  log "APT: Missing launcher system packages: ${missing_packages[*]}"
   animate_status "Refreshing apt metadata"
   sudo apt update
   animate_status "Installing base runtime packages"
-  sudo apt install -y \
-    git curl wget build-essential cmake pkg-config \
-    python3 python3-venv python3-pip \
-    wmctrl gnome-terminal can-utils iproute2 xclip xsel \
-    alsa-utils \
-    pulseaudio-utils pipewire-pulse wireplumber pavucontrol \
-    mosquitto mosquitto-clients \
-    libasound2-dev portaudio19-dev \
-    libgl1 libegl1 libglib2.0-0 \
-    libgstreamer1.0-0 gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good gstreamer1.0-libav \
-    libpulse0 libmosquitto-dev libcjson-dev \
-    libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
-    libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 \
-    libxcomposite1 libxdamage1 libxrandr2 libnss3 \
-    libatk-bridge2.0-0 libgtk-3-0
+  sudo apt install -y "${missing_packages[@]}"
   log "OK: System dependencies installed. Python runtime version selection is handled by uv."
 }
 
@@ -1678,21 +1712,24 @@ ensure_runtime_dependencies() {
   local missing_packages=()
   local apt_updated="0"
 
-  command -v git >/dev/null 2>&1 || missing_packages+=("git")
-  command -v curl >/dev/null 2>&1 || missing_packages+=("curl")
-  command -v wget >/dev/null 2>&1 || missing_packages+=("wget")
-  command -v make >/dev/null 2>&1 || missing_packages+=("build-essential")
-  command -v gcc >/dev/null 2>&1 || missing_packages+=("build-essential")
-  command -v cmake >/dev/null 2>&1 || missing_packages+=("cmake")
-  command -v candump >/dev/null 2>&1 || missing_packages+=("can-utils")
-  command -v ip >/dev/null 2>&1 || missing_packages+=("iproute2")
-  command -v xclip >/dev/null 2>&1 || missing_packages+=("xclip")
-  command -v xsel >/dev/null 2>&1 || missing_packages+=("xsel")
-  command -v aplay >/dev/null 2>&1 || missing_packages+=("alsa-utils")
-  command -v pactl >/dev/null 2>&1 || missing_packages+=("pulseaudio-utils")
-  dpkg -s pipewire-pulse >/dev/null 2>&1 || missing_packages+=("pipewire-pulse")
-  dpkg -s wireplumber >/dev/null 2>&1 || missing_packages+=("wireplumber")
-  command -v mosquitto >/dev/null 2>&1 || missing_packages+=("mosquitto" "mosquitto-clients")
+  command -v git >/dev/null 2>&1 || append_missing_apt_package "git" missing_packages
+  command -v curl >/dev/null 2>&1 || append_missing_apt_package "curl" missing_packages
+  command -v wget >/dev/null 2>&1 || append_missing_apt_package "wget" missing_packages
+  command -v make >/dev/null 2>&1 || append_missing_apt_package "build-essential" missing_packages
+  command -v gcc >/dev/null 2>&1 || append_missing_apt_package "build-essential" missing_packages
+  command -v cmake >/dev/null 2>&1 || append_missing_apt_package "cmake" missing_packages
+  command -v candump >/dev/null 2>&1 || append_missing_apt_package "can-utils" missing_packages
+  command -v ip >/dev/null 2>&1 || append_missing_apt_package "iproute2" missing_packages
+  command -v xclip >/dev/null 2>&1 || append_missing_apt_package "xclip" missing_packages
+  command -v xsel >/dev/null 2>&1 || append_missing_apt_package "xsel" missing_packages
+  command -v aplay >/dev/null 2>&1 || append_missing_apt_package "alsa-utils" missing_packages
+  command -v pactl >/dev/null 2>&1 || append_missing_apt_package "pulseaudio-utils" missing_packages
+  append_missing_apt_package "pipewire-pulse" missing_packages
+  append_missing_apt_package "wireplumber" missing_packages
+  command -v mosquitto >/dev/null 2>&1 || {
+    append_missing_apt_package "mosquitto" missing_packages
+    append_missing_apt_package "mosquitto-clients" missing_packages
+  }
 
   if [[ "${#missing_packages[@]}" -gt 0 ]]; then
     log "Missing runtime dependencies detected: ${missing_packages[*]}"
@@ -1715,7 +1752,13 @@ ensure_runtime_dependencies() {
     fi
     log "Python 3 base runtime missing. Installing generic python3 package so uv can bootstrap the requested interpreter."
     if [[ "$apt_updated" != "1" ]]; then sudo apt update; apt_updated="1"; fi
-    sudo apt install -y python3 python3-venv python3-pip
+    local python_packages=()
+    append_missing_apt_package "python3" python_packages
+    append_missing_apt_package "python3-venv" python_packages
+    append_missing_apt_package "python3-pip" python_packages
+    if [[ "${#python_packages[@]}" -gt 0 ]]; then
+      sudo apt install -y "${python_packages[@]}"
+    fi
   fi
 }
 
