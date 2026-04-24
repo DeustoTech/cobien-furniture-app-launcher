@@ -4,7 +4,7 @@ This repository is the deployment and lifecycle control layer for CoBien furnitu
 
 Its long-term goal is to own the full furniture bootstrap and runtime orchestration flow, while the application repositories remain focused on the runtime code they ship.
 
-At the moment, this repository already contains the system bootstrap script, the extracted launcher entrypoint, user-level systemd helpers, and deployment environment templates.
+At the moment, this repository already contains the system bootstrap script, the extracted launcher entrypoint, internal compatibility helpers, and deployment environment templates.
 
 ## Repository purpose
 
@@ -66,7 +66,7 @@ cobien-furniture-app-launcher/
 
 ### `setup-cobien-furniture-environment.sh`
 
-System bootstrap script for a fresh Ubuntu furniture device.
+Official and only supported human entrypoint for a fresh Ubuntu furniture device.
 
 It is responsible for:
 
@@ -82,10 +82,11 @@ It is responsible for:
 - installing the user-level systemd units so the app starts naturally after reboot
 
 This script changes system state and must only be run on a target device.
+If you are deploying or reinstalling a furniture device, this is the script you should run.
 
 ### `cobien-launcher.sh`
 
-Main operational entrypoint for the furniture runtime.
+Internal runtime controller used by the setup flow and by user services after installation.
 
 It is responsible for:
 
@@ -99,19 +100,18 @@ It is responsible for:
 - launching the bridge and the frontend runtime
 - supporting unattended, setup-only, launch-only, update-only, dry-run, and diagnose modes
 
-This script is the core of the deployment controller design.
+This script is still the core runtime controller, but it is no longer the recommended human entrypoint for a furniture deployment.
 
 ### `install-systemd-user.sh`
 
-Installs and refreshes the user-level systemd units and autostart hooks required by the furniture runtime.
+Compatibility wrapper kept for older operational habits.
 
-It also:
+The real systemd installation logic now lives in:
 
-- enables linger when available
-- installs a graphical-session environment import helper
-- updates the Openbox autostart hook
-- removes legacy cron-based update entries
-- enables and starts the current launcher services
+- `setup-cobien-furniture-environment.sh`
+- `cobien-launcher.sh`
+
+This wrapper exists only so older manual workflows do not fail abruptly.
 
 ### `import-systemd-user-env.sh`
 
@@ -143,7 +143,7 @@ This file represents the kind of derived values the launcher writes after resolv
 
 ## Current operational model
 
-Today, the furniture deployment flow is split into two layers.
+Today, the operational code still has internal layers, but the supported deployment flow has already been collapsed into one official script.
 
 ### Layer 1: system bootstrap
 
@@ -153,7 +153,7 @@ This layer prepares the Ubuntu device itself.
 
 ### Layer 2: runtime lifecycle management
 
-Handled by `cobien-launcher.sh` and the `systemd` scripts.
+Handled internally by `cobien-launcher.sh` and the installed `systemd` user units.
 
 This layer owns setup, update checks, launch, restart, and runtime supervision.
 

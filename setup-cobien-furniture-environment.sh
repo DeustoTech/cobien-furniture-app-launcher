@@ -28,6 +28,7 @@ BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-master}"
 DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-eDP-1}"
 DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-1920x1200}"
 DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-inverted}"
+DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-1}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
 AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
 MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-}"
@@ -194,6 +195,7 @@ print_preflight_snapshot() {
     print_kv "Display output" "$DISPLAY_OUTPUT"
     print_kv "Display mode" "$DISPLAY_MODE"
     print_kv "Display rotation" "$DISPLAY_ROTATION"
+    print_kv "Kiosk sleep lock" "$DISABLE_SYSTEM_SLEEP"
     print_kv "Admin base URL" "$ADMIN_BASE_URL"
     print_kv "RustDesk version" "$RUSTDESK_VERSION"
     print_kv "RustDesk enabled" "$INSTALL_RUSTDESK"
@@ -214,6 +216,7 @@ load_selected_env_settings() {
     DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-$DISPLAY_OUTPUT}"
     DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-$DISPLAY_MODE}"
     DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-$DISPLAY_ROTATION}"
+    DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-$DISABLE_SYSTEM_SLEEP}"
     INSTALL_RUSTDESK="${COBIEN_INSTALL_RUSTDESK:-$INSTALL_RUSTDESK}"
     RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-$RUSTDESK_VERSION}"
     RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
@@ -607,6 +610,12 @@ write_openbox_autostart() {
 sleep 2
 xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >/dev/null 2>&1 || true
 
+if [ "${DISABLE_SYSTEM_SLEEP}" = "1" ] && command -v xset >/dev/null 2>&1; then
+  xset s off >/tmp/cobien-xset.log 2>&1 || true
+  xset -dpms >/tmp/cobien-xset.log 2>&1 || true
+  xset s noblank >/tmp/cobien-xset.log 2>&1 || true
+fi
+
 pgrep -u "${USER_NAME}" pipewire >/dev/null || pipewire >/tmp/cobien-pipewire.log 2>&1 &
 pgrep -u "${USER_NAME}" wireplumber >/dev/null || wireplumber >/tmp/cobien-wireplumber.log 2>&1 &
 
@@ -620,6 +629,28 @@ fi
 EOF
 
     chmod +x "$USER_HOME/.config/openbox/autostart"
+}
+
+configure_kiosk_power_management() {
+    if [[ "$DISABLE_SYSTEM_SLEEP" != "1" ]]; then
+        log INFO "Kiosk power-management lock is disabled by configuration."
+        return 0
+    fi
+
+    sudo mkdir -p /etc/systemd/logind.conf.d
+    sudo tee /etc/systemd/logind.conf.d/50-cobien-kiosk.conf > /dev/null <<EOF
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+IdleAction=ignore
+EOF
+
+    sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
+    sudo systemctl restart systemd-logind >/dev/null 2>&1 || true
+
+    print_status_badge OK "Suspend, hibernate and idle sleep disabled for kiosk mode"
+    print_status_badge OK "Openbox sessions will disable DPMS and screen blanking"
 }
 
 write_lightdm_config() {
@@ -764,6 +795,7 @@ print_summary() {
     print_kv "Frontend repo" "$PROJECT_DIR/$FRONTEND_REPO_NAME"
     print_kv "MQTT repo" "$PROJECT_DIR/$MQTT_REPO_NAME"
     print_kv "Desktop session" "Openbox via LightDM autologin"
+    print_kv "Sleep prevention" "$DISABLE_SYSTEM_SLEEP"
     print_kv "RustDesk version" "$RUSTDESK_VERSION"
     print_kv "Deployment env" "${MASTER_ENV_FILE:-auto-discovered by launcher}"
     echo
@@ -831,6 +863,7 @@ main() {
     run_cmd "Enabling LightDM" sudo systemctl enable lightdm
     run_cmd "Writing LightDM autologin" write_lightdm_config
     run_cmd "Writing Openbox autostart" write_openbox_autostart
+    run_cmd "Applying kiosk power policy" configure_kiosk_power_management
 
     phase "Validating the graphical session" "Checking that the Openbox session entry is installed and ready."
     if [ ! -f /usr/share/xsessions/openbox.desktop ]; then
