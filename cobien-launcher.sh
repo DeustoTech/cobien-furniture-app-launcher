@@ -712,7 +712,6 @@ recover_stale_lock_state() {
 
 acquire_single_instance_lock() {
   mkdir -p "$(dirname "$LOCK_FILE")"
-  : > "$LOCK_FILE"
 
   if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     local lock_pid
@@ -1205,7 +1204,8 @@ start_can_logger_background() {
   can_log_file="$(build_dated_log_path "can-bus")"
   printf '[%s] [CAN] Starting candump on can0\n' "$(date '+%Y-%m-%d %H:%M:%S')" >>"$can_log_file"
   pkill -f "candump can0" >/dev/null 2>&1 || true
-  nohup candump can0 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$can_log_file" &
+  ( nohup candump can0 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$can_log_file" 2>&1 ) &
+  disown $!
   log "CAN: Logging CAN traffic to: $can_log_file"
 }
 
@@ -1214,10 +1214,24 @@ runtime_bridge_command() {
 echo '[BRIDGE] Build and launch'
 set -e
 cd "$BRIDGE_DIR" || exit
-make clean
 make -j
 ./cobien_bridge "$CAN_CONFIG"
 EOF
+}
+
+wait_for_bridge() {
+  local timeout="${1:-30}"
+  local elapsed=0
+  while (( elapsed < timeout )); do
+    if pgrep -f "/cobien_bridge" >/dev/null 2>&1; then
+      log "Bridge process ready after ${elapsed}s"
+      return 0
+    fi
+    sleep 1
+    elapsed=$(( elapsed + 1 ))
+  done
+  log "WARN: Bridge process did not appear within ${timeout}s; launching app anyway"
+  return 1
 }
 
 runtime_app_command() {
@@ -1263,7 +1277,8 @@ runtime_launch_background() {
   cleanup_old_logs "$name"
   log "FALLBACK: Launching $name in background. Log: $log_file"
   printf '[%s] [%s] Starting background command\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$name" >>"$log_file"
-  nohup bash -lc "$command_text" 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" &
+  ( nohup bash -lc "$command_text" | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" 2>&1 ) &
+  disown $!
 }
 
 build_dated_log_path() {
@@ -1418,13 +1433,10 @@ launch_runtime() {
     log "WARN: Hardware runtime disabled (mode=$HARDWARE_MODE). Skipping CAN setup/logger/bridge."
   fi
 
-  sleep 2
-
   if should_enable_hardware_runtime; then
     runtime_launch_background "mqtt-can-bridge" "$(runtime_bridge_command)"
+    wait_for_bridge 30 || true
   fi
-
-  sleep 2
 
   runtime_launch_background "cobien-app" "$(runtime_app_command)"
 }
@@ -2963,7 +2975,7 @@ run_update_once() {
     manual_reload_requested="1"
     log "Manual update requested from furniture administration; runtime will be relaunched even if repositories are already up to date."
   fi
-  log_phase_banner "Repository update" "Refreshing cobien_FrontEnd and cobien_MQTT_Dictionnary before continuing with the runtime."
+  log_phase_banner "Repository update" "Refreshing launcher, cobien_FrontEnd and cobien_MQTT_Dictionnary before continuing with the runtime."
   log "Preparing update handoff: ensuring only one launcher/runtime instance remains before updating."
 
   if ! is_running_inside_systemd_user_service && has_active_systemd_user_launcher_service; then
@@ -2973,6 +2985,10 @@ run_update_once() {
   wait_for_no_other_launcher_processes 10 || true
   stop_runtime_processes
   wait_for_runtime_shutdown 20 || true
+
+  # Check the launcher repo first: if cobien-launcher.sh itself changed, handoff_to_updated_launcher
+  # execs the new version, which will then update the remaining repos on its next run.
+  update_repo_if_needed "$LAUNCHER_ROOT" "$handoff_mode" || true
 
   if update_repo_if_needed "$FRONTEND_REPO" "$handoff_mode"; then
     updated=1
