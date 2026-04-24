@@ -118,6 +118,9 @@ UV_BIN="${COBIEN_BOOTSTRAP_UV_BIN:-}"
 PYTHON_REQUEST="${COBIEN_BOOTSTRAP_PYTHON_VERSION:-${COBIEN_UV_PYTHON:-3.13}}"
 ARGS_PROVIDED="0"
 GLOBAL_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cobien"
+GLOBAL_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/cobien"
+GLOBAL_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/cobien"
+GLOBAL_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cobien"
 LAST_RUN_CONFIG_FILE="$GLOBAL_CONFIG_DIR/launcher-last.env"
 MASTER_ENV_FILE=""
 LOCK_FILE="${COBIEN_LAUNCHER_LOCK_FILE:-/tmp/cobien-launcher.lock}"
@@ -396,6 +399,10 @@ print_runtime_summary() {
   echo "--------------"
   print_file_status "Deployment env" "${MASTER_ENV_FILE:-unresolved}"
   print_file_status "Runtime env" "${ENV_FILE:-unresolved}"
+  print_file_status "Config dir" "${GLOBAL_CONFIG_DIR:-unresolved}" dir
+  print_file_status "State dir" "${GLOBAL_STATE_DIR:-unresolved}" dir
+  print_file_status "Cache dir" "${GLOBAL_CACHE_DIR:-unresolved}" dir
+  print_file_status "Data dir" "${GLOBAL_DATA_DIR:-unresolved}" dir
   print_file_status "Unified config" "${FRONTEND_APP_DIR:-}/config/config.local.json"
   print_file_status "Version" "${FRONTEND_APP_DIR:-}/VERSION"
   print_file_status "Pyproject" "${FRONTEND_APP_DIR:-}/pyproject.toml"
@@ -956,14 +963,17 @@ resolve_paths() {
   MQTT_REPO="$WORKSPACE_ROOT/$MQTT_REPO_NAME"
   FRONTEND_APP_DIR="$FRONTEND_REPO/app"
   VENV_DIR="$FRONTEND_APP_DIR/.venv"
-  ENV_FILE="${COBIEN_UPDATE_ENV_FILE:-$LAUNCHER_ROOT/cobien-update.env}"
+  ENV_FILE="${COBIEN_UPDATE_ENV_FILE:-$GLOBAL_CONFIG_DIR/cobien-update.env}"
   MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-$LAUNCHER_ROOT/cobien.env}"
   BRIDGE_DIR="$MQTT_REPO/Interface_MQTT_CAN_c"
   CAN_CONFIG="$BRIDGE_DIR/conversion.json"
   SELF_SCRIPT="$LAUNCHER_ROOT/cobien-launcher.sh"
   FRONTEND_REPO_ROOT="$FRONTEND_REPO"
-  LOG_DIR="${COBIEN_LOG_DIR:-$FRONTEND_REPO_ROOT/logs}"
-  RUNTIME_STATE_DIR="$FRONTEND_APP_DIR/runtime_state"
+  LOG_DIR="${COBIEN_LOG_DIR:-$GLOBAL_STATE_DIR/logs}"
+  MODELS_DIR="${COBIEN_MODELS_DIR:-$GLOBAL_DATA_DIR/models/piper}"
+  PIPER_RUNTIME_DIR="${COBIEN_PIPER_RUNTIME_DIR:-$GLOBAL_DATA_DIR/piper/runtime}"
+  RUNTIME_STATE_DIR="${COBIEN_RUNTIME_STATE_DIR:-$GLOBAL_STATE_DIR/runtime}"
+  CACHE_DIR="${COBIEN_CACHE_DIR:-$GLOBAL_CACHE_DIR}"
   UPDATE_MARKER_FILE="$RUNTIME_STATE_DIR/system_updated.json"
   LAUNCHER_STOP_REQUEST_FILE="$RUNTIME_STATE_DIR/launcher_stop_requested.flag"
   MANUAL_UPDATE_RELOAD_FILE="$RUNTIME_STATE_DIR/manual_update_reload.flag"
@@ -1601,6 +1611,7 @@ python_fallback_apt_pkg() {
 check_paths() {
   set_phase "check-paths"
   resolve_paths
+  mkdir -p "$GLOBAL_CONFIG_DIR" "$GLOBAL_STATE_DIR" "$GLOBAL_CACHE_DIR" "$GLOBAL_DATA_DIR" "$LOG_DIR" "$RUNTIME_STATE_DIR" "$CACHE_DIR" "$MODELS_DIR" "$PIPER_RUNTIME_DIR"
   [[ -d "$FRONTEND_REPO/.git" ]] || { log "Frontend repository not found: $FRONTEND_REPO"; exit 1; }
   [[ -d "$MQTT_REPO/.git" ]] || { log "MQTT repository not found: $MQTT_REPO"; exit 1; }
   [[ -d "$FRONTEND_APP_DIR" ]] || { log "Frontend app directory not found: $FRONTEND_APP_DIR"; exit 1; }
@@ -1709,7 +1720,7 @@ configure_tts_runtime() {
         ;;
     esac
 
-    runtime_dir="$FRONTEND_APP_DIR/models/piper/runtime"
+    runtime_dir="$PIPER_RUNTIME_DIR"
     archive_path="$runtime_dir/$archive_name"
     download_url="https://github.com/rhasspy/piper/releases/download/${release_tag}/${archive_name}"
     mkdir -p "$runtime_dir"
@@ -2043,10 +2054,10 @@ configure_tts_runtime() {
   fi
 
       
-  [[ -z "$TTS_PIPER_MODEL_ES_MALE" ]] && TTS_PIPER_MODEL_ES_MALE="$FRONTEND_APP_DIR/models/piper/${TTS_PIPER_DEFAULT_MODEL_ES_MALE}.onnx"
-  [[ -z "$TTS_PIPER_MODEL_ES_FEMALE" ]] && TTS_PIPER_MODEL_ES_FEMALE="$FRONTEND_APP_DIR/models/piper/${TTS_PIPER_DEFAULT_MODEL_ES_FEMALE}.onnx"
-  [[ -z "$TTS_PIPER_MODEL_FR_MALE" ]] && TTS_PIPER_MODEL_FR_MALE="$FRONTEND_APP_DIR/models/piper/${TTS_PIPER_DEFAULT_MODEL_FR_MALE}.onnx"
-  [[ -z "$TTS_PIPER_MODEL_FR_FEMALE" ]] && TTS_PIPER_MODEL_FR_FEMALE="$FRONTEND_APP_DIR/models/piper/${TTS_PIPER_DEFAULT_MODEL_FR_FEMALE}.onnx"
+  [[ -z "$TTS_PIPER_MODEL_ES_MALE" ]] && TTS_PIPER_MODEL_ES_MALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_ES_MALE}.onnx"
+  [[ -z "$TTS_PIPER_MODEL_ES_FEMALE" ]] && TTS_PIPER_MODEL_ES_FEMALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_ES_FEMALE}.onnx"
+  [[ -z "$TTS_PIPER_MODEL_FR_MALE" ]] && TTS_PIPER_MODEL_FR_MALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_FR_MALE}.onnx"
+  [[ -z "$TTS_PIPER_MODEL_FR_FEMALE" ]] && TTS_PIPER_MODEL_FR_FEMALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_FR_FEMALE}.onnx"
 
   local ok_models="1"
   install_piper_model "es-male" "$TTS_PIPER_MODEL_ES_MALE" "$TTS_PIPER_MODEL_ES_MALE_URL" || ok_models="0"
@@ -2562,6 +2573,11 @@ write_env_file() {
     echo "COBIEN_WORKSPACE_ROOT=$(shell_quote_env_value "$WORKSPACE_ROOT")"
     echo "COBIEN_UPDATE_ENV_FILE=$(shell_quote_env_value "$ENV_FILE")"
     echo "COBIEN_MASTER_ENV_FILE=$(shell_quote_env_value "$MASTER_ENV_FILE")"
+    echo "COBIEN_LOG_DIR=$(shell_quote_env_value "$LOG_DIR")"
+    echo "COBIEN_MODELS_DIR=$(shell_quote_env_value "$MODELS_DIR")"
+    echo "COBIEN_PIPER_RUNTIME_DIR=$(shell_quote_env_value "$PIPER_RUNTIME_DIR")"
+    echo "COBIEN_RUNTIME_STATE_DIR=$(shell_quote_env_value "$RUNTIME_STATE_DIR")"
+    echo "COBIEN_CACHE_DIR=$(shell_quote_env_value "$CACHE_DIR")"
     echo "COBIEN_UPDATE_REMOTE=$(shell_quote_env_value "$REMOTE_NAME")"
     echo "COBIEN_UPDATE_BRANCH=$(shell_quote_env_value "$BRANCH_NAME")"
     echo "COBIEN_UPDATE_INTERVAL_SEC=$(shell_quote_env_value "$POLL_INTERVAL_SEC")"
@@ -3077,6 +3093,12 @@ print_diagnostics() {
   log "--- critical file dependency status ---"
   print_file_status "Deployment env" "${MASTER_ENV_FILE:-unresolved}"
   print_file_status "Runtime env" "${ENV_FILE:-unresolved}"
+  print_file_status "Config dir" "$GLOBAL_CONFIG_DIR" dir
+  print_file_status "State dir" "$GLOBAL_STATE_DIR" dir
+  print_file_status "Cache dir" "$GLOBAL_CACHE_DIR" dir
+  print_file_status "Data dir" "$GLOBAL_DATA_DIR" dir
+  print_file_status "Models dir" "$MODELS_DIR" dir
+  print_file_status "Piper runtime dir" "$PIPER_RUNTIME_DIR" dir
   print_file_status "Unified config" "$FRONTEND_APP_DIR/config/config.local.json"
   print_file_status "Default config" "$FRONTEND_APP_DIR/config/config.default.json"
   print_file_status "Launcher contract" "$FRONTEND_APP_DIR/config_runtime.py"
@@ -3102,9 +3124,9 @@ print_diagnostics() {
     log "config.local.json missing"
   fi
 
-  log "Piper models dir: $FRONTEND_APP_DIR/models/piper"
-  if [[ -d "$FRONTEND_APP_DIR/models/piper" ]]; then
-    ls -la "$FRONTEND_APP_DIR/models/piper" 2>/dev/null || true
+  log "Piper models dir: $MODELS_DIR"
+  if [[ -d "$MODELS_DIR" ]]; then
+    ls -la "$MODELS_DIR" 2>/dev/null || true
   else
     log "Piper models directory not present"
   fi

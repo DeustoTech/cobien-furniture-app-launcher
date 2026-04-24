@@ -81,7 +81,9 @@ Examples:
 
 - package installation
 - LightDM/Openbox configuration
-- SSH enablement
+- desktop session preparation
+- RustDesk installation and Openbox autostart integration
+- runtime preparation before the first reboot
 - session startup preparation
 
 ### 2. Control layer

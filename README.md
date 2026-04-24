@@ -70,12 +70,16 @@ System bootstrap script for a fresh Ubuntu furniture device.
 
 It is responsible for:
 
-- installing system packages such as Openbox, LightDM, PipeWire, and SSH
+- installing system packages such as Openbox, LightDM, and PipeWire
 - selecting the invoking user as the target furniture user
 - configuring autologin into Openbox
+- applying the furniture display layout, including the default inverted rotation used by upside-down hardware installations
 - creating the workspace directory
 - cloning or updating the runtime repositories
-- creating Openbox startup hooks for remote access tooling
+- installing RustDesk and wiring it into the Openbox session
+- creating Openbox startup hooks for the furniture graphical session and launcher handoff
+- preparing the CoBien runtime in setup mode without launching it immediately
+- installing the user-level systemd units so the app starts naturally after reboot
 
 This script changes system state and must only be run on a target device.
 
@@ -128,6 +132,8 @@ Current units:
 Human-maintained deployment configuration template.
 
 This file defines the main deployment-facing settings such as workspace, branch, device identity, backend URLs, and runtime feature configuration.
+
+It also carries the furniture display settings used during system bootstrap, including output name, resolution, and rotation.
 
 ### `templates/cobien-update.env.example`
 
