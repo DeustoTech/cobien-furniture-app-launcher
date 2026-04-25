@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHER_ROOT_DEFAULT="$SCRIPT_DIR"
@@ -109,6 +110,7 @@ NEWS_API_URL="${COBIEN_NEWS_API_URL:-https://newsapi.org/v2/top-headlines}"
 OPEN_METEO_URL="${COBIEN_OPEN_METEO_URL:-https://api.open-meteo.com/v1/forecast}"
 NOMINATIM_SEARCH_URL="${COBIEN_NOMINATIM_SEARCH_URL:-https://nominatim.openstreetmap.org/search}"
 TTS_PIPER_RELEASE_TAG_DEFAULT="2023.11.14-2"
+UV_INSTALL_VERSION="${COBIEN_UV_INSTALL_VERSION:-0.11.7}"
 [[ -z "$TTS_PIPER_MODEL_ES_MALE_URL" ]] && TTS_PIPER_MODEL_ES_MALE_URL="$TTS_PIPER_DEFAULT_MODEL_ES_MALE_URL"
 [[ -z "$TTS_PIPER_MODEL_ES_FEMALE_URL" ]] && TTS_PIPER_MODEL_ES_FEMALE_URL="$TTS_PIPER_DEFAULT_MODEL_ES_FEMALE_URL"
 [[ -z "$TTS_PIPER_MODEL_FR_MALE_URL" ]] && TTS_PIPER_MODEL_FR_MALE_URL="$TTS_PIPER_DEFAULT_MODEL_FR_MALE_URL"
@@ -126,6 +128,7 @@ MASTER_ENV_FILE=""
 LOCK_FILE="${COBIEN_LAUNCHER_LOCK_FILE:-/tmp/cobien-launcher.lock}"
 LOCK_DIR="${LOCK_FILE}.d"
 LOCK_PID_FILE="$LOCK_DIR/pid"
+UPDATE_LOCK_DIR="${LOCK_FILE%.lock}.update.lock.d"
 CURRENT_PHASE="bootstrap"
 LAUNCHER_ROOT="${COBIEN_LAUNCHER_ROOT:-$LAUNCHER_ROOT_DEFAULT}"
 
@@ -515,6 +518,123 @@ run_full_install_plan() {
   fi
 }
 
+# Safe env-file loader: parses KEY=value lines without executing shell code.
+# Accepts double-quoted values (with \" and \\ unescaping); skips blanks and
+# comments. Only keys matching [A-Za-z_][A-Za-z0-9_]* are exported.
+safe_source_env_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  local key value line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ ${#value} -ge 2 && "$value" == '"'*'"' ]]; then
+      value="${value:1:${#value}-2}"
+      value="${value//\\\"/\"}"
+      value="${value//\\\\/\\}"
+    fi
+    export "$key=$value"
+  done < "$file"
+  return 0
+}
+
+# Canonical mapping: COBIEN_* env-var name → local script variable name.
+# Keep both arrays in sync; used by _absorb_cobien_env_vars and _emit_cobien_env_pairs.
+_COBIEN_ENV_KEYS=(
+  COBIEN_WORKSPACE_ROOT       COBIEN_FRONTEND_REPO_NAME   COBIEN_MQTT_REPO_NAME
+  COBIEN_MASTER_ENV_FILE      COBIEN_UPDATE_BRANCH        COBIEN_UPDATE_REMOTE
+  COBIEN_UPDATE_INTERVAL_SEC  COBIEN_APP_LANGUAGE         COBIEN_DEVICE_ID
+  COBIEN_VIDEOCALL_ROOM       COBIEN_NOTIFY_API_KEY       COBIEN_VIDEOCALL_DEVICE_API_KEY
+  COBIEN_DEVICE_LOCATION      COBIEN_HARDWARE_MODE        COBIEN_SETTINGS_PIN
+  COBIEN_RESTART_PIN          COBIEN_WEATHER_CITIES_JSON  COBIEN_WEATHER_CITY_CATALOG_JSON
+  COBIEN_WEATHER_PRIMARY_CITY COBIEN_BUTTON_COLORS_JSON   COBIEN_RFID_ACTIONS_JSON
+  COBIEN_MICROPHONE_DEVICE    COBIEN_AUDIO_OUTPUT_DEVICE  COBIEN_JOKE_CATEGORY
+  COBIEN_IDLE_TIMEOUT_SEC     COBIEN_NOTIFICATIONS_JSON   COBIEN_BACKEND_BASE_URL
+  COBIEN_DEVICE_POLL_URL      COBIEN_DEVICE_POLL_INTERVAL_SEC  COBIEN_DEVICE_HEARTBEAT_URL
+  COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC  OWM_API_KEY  NEWS_API_KEY  MONGO_URI
+  COBIEN_PIZARRA_NOTIFY_URL   COBIEN_PIZARRA_API_URL      COBIEN_PIZARRA_DELETE_URL_TEMPLATE
+  COBIEN_CONTACTS_API_URL     COBIEN_ICSO_TELEMETRY_URL   COBIEN_ICSO_EVENTS_URL
+  COBIEN_DEVICE_VIDEOCALL_SESSION_URL   COBIEN_PORTAL_VIDEOCALL_URL
+  COBIEN_PORTAL_VIDEOCALL_DEVICE_URL    COBIEN_PORTAL_CALL_ANSWERED_URL
+  COBIEN_MQTT_LOCAL_BROKER    COBIEN_MQTT_LOCAL_PORT      COBIEN_HTTP_TIMEOUT
+  COBIEN_TTS_ENGINE           COBIEN_TTS_RATE             COBIEN_TTS_VOLUME
+  COBIEN_TTS_PIPER_BIN        COBIEN_TTS_PIPER_MODEL_ES   COBIEN_TTS_PIPER_MODEL_FR
+  COBIEN_TTS_PIPER_MODEL_ES_MALE        COBIEN_TTS_PIPER_MODEL_ES_FEMALE
+  COBIEN_TTS_PIPER_MODEL_FR_MALE        COBIEN_TTS_PIPER_MODEL_FR_FEMALE
+  COBIEN_TTS_PIPER_MODEL_ES_URL         COBIEN_TTS_PIPER_MODEL_FR_URL
+  COBIEN_TTS_PIPER_MODEL_ES_MALE_URL    COBIEN_TTS_PIPER_MODEL_ES_FEMALE_URL
+  COBIEN_TTS_PIPER_MODEL_FR_MALE_URL    COBIEN_TTS_PIPER_MODEL_FR_FEMALE_URL
+  COBIEN_TTS_PIPER_VOICE_ES   COBIEN_TTS_PIPER_VOICE_FR   COBIEN_DISABLE_SYSTEM_SLEEP
+  COBIEN_OPENWEATHER_CURRENT_URL        COBIEN_OPENWEATHER_FORECAST_URL
+  COBIEN_NEWS_API_URL         COBIEN_OPEN_METEO_URL        COBIEN_NOMINATIM_SEARCH_URL
+  COBIEN_CRON_SCHEDULE        COBIEN_INSTALL_SYSTEMD_USER  COBIEN_INSTALL_CRON
+  COBIEN_ENABLE_WATCH         COBIEN_RECREATE_VENV         COBIEN_INSTALL_SYSTEM_DEPS
+  COBIEN_TTS_PIPER_PROVIDER   COBIEN_TTS_PIPER_VERSION
+  COBIEN_NON_INTERACTIVE      COBIEN_AUTO_CONFIRM          COBIEN_BOOTSTRAP_PYTHON_VERSION
+)
+_COBIEN_LOCAL_VARS=(
+  WORKSPACE_ROOT        FRONTEND_REPO_NAME    MQTT_REPO_NAME
+  MASTER_ENV_FILE       BRANCH_NAME           REMOTE_NAME
+  POLL_INTERVAL_SEC     APP_LANGUAGE          DEVICE_ID
+  VIDEOCALL_ROOM        NOTIFY_API_KEY        VIDEOCALL_DEVICE_API_KEY
+  DEVICE_LOCATION       HARDWARE_MODE         SETTINGS_PIN
+  RESTART_PIN           WEATHER_CITIES_JSON   WEATHER_CITY_CATALOG_JSON
+  WEATHER_PRIMARY_CITY  BUTTON_COLORS_JSON    RFID_ACTIONS_JSON
+  MICROPHONE_DEVICE     AUDIO_OUTPUT_DEVICE   JOKE_CATEGORY
+  IDLE_TIMEOUT_SEC      NOTIFICATIONS_JSON    BACKEND_BASE_URL
+  DEVICE_POLL_URL       DEVICE_POLL_INTERVAL_SEC  DEVICE_HEARTBEAT_URL
+  DEVICE_HEARTBEAT_INTERVAL_SEC  OWM_API_KEY  NEWS_API_KEY  MONGO_URI
+  PIZARRA_NOTIFY_URL    PIZARRA_API_URL       PIZARRA_DELETE_URL_TEMPLATE
+  CONTACTS_API_URL      ICSO_TELEMETRY_URL    ICSO_EVENTS_URL
+  DEVICE_VIDEOCALL_SESSION_URL   PORTAL_VIDEOCALL_URL
+  PORTAL_VIDEOCALL_DEVICE_URL    PORTAL_CALL_ANSWERED_URL
+  MQTT_LOCAL_BROKER     MQTT_LOCAL_PORT       HTTP_TIMEOUT_SEC
+  TTS_ENGINE            TTS_RATE              TTS_VOLUME
+  TTS_PIPER_BIN         TTS_PIPER_MODEL_ES    TTS_PIPER_MODEL_FR
+  TTS_PIPER_MODEL_ES_MALE        TTS_PIPER_MODEL_ES_FEMALE
+  TTS_PIPER_MODEL_FR_MALE        TTS_PIPER_MODEL_FR_FEMALE
+  TTS_PIPER_MODEL_ES_URL         TTS_PIPER_MODEL_FR_URL
+  TTS_PIPER_MODEL_ES_MALE_URL    TTS_PIPER_MODEL_ES_FEMALE_URL
+  TTS_PIPER_MODEL_FR_MALE_URL    TTS_PIPER_MODEL_FR_FEMALE_URL
+  TTS_PIPER_VOICE_ES    TTS_PIPER_VOICE_FR    DISABLE_SYSTEM_SLEEP
+  OPENWEATHER_CURRENT_URL        OPENWEATHER_FORECAST_URL
+  NEWS_API_URL          OPEN_METEO_URL        NOMINATIM_SEARCH_URL
+  CRON_SCHEDULE         INSTALL_SYSTEMD_USER  INSTALL_CRON
+  ENABLE_WATCH          RECREATE_VENV         INSTALL_SYSTEM_DEPS
+  TTS_PIPER_PROVIDER    TTS_PIPER_VERSION
+  NON_INTERACTIVE       AUTO_CONFIRM          PYTHON_REQUEST
+)
+
+# Apply COBIEN_* env vars to local script vars. Call after safe_source_env_file.
+# Each env key in _COBIEN_ENV_KEYS whose value is non-empty overwrites the
+# corresponding local var in _COBIEN_LOCAL_VARS. Pass env keys to skip as args.
+_absorb_cobien_env_vars() {
+  local -A _skip=()
+  local k; for k in "$@"; do _skip["$k"]=1; done
+  local i env_key env_val local_var
+  for i in "${!_COBIEN_ENV_KEYS[@]}"; do
+    env_key="${_COBIEN_ENV_KEYS[$i]}"
+    [[ -n "${_skip[$env_key]+x}" ]] && continue
+    env_val="${!env_key}"
+    [[ -n "$env_val" ]] || continue
+    local_var="${_COBIEN_LOCAL_VARS[$i]}"
+    declare -g "$local_var=$env_val"
+  done
+}
+
+# Emit KEY=VALUE lines (unquoted) for every pair in the mapping arrays.
+# Suitable for save_last_run_config (read back via safe_source_env_file).
+_emit_cobien_env_pairs() {
+  local i env_key local_var
+  for i in "${!_COBIEN_ENV_KEYS[@]}"; do
+    env_key="${_COBIEN_ENV_KEYS[$i]}"
+    local_var="${_COBIEN_LOCAL_VARS[$i]}"
+    printf '%s=%s\n' "$env_key" "${!local_var}"
+  done
+}
+
 read_lock_pid() {
   if [[ -f "$LOCK_PID_FILE" ]]; then
     head -n1 "$LOCK_PID_FILE" 2>/dev/null | tr -dc '0-9'
@@ -710,9 +830,27 @@ recover_stale_lock_state() {
   return 0
 }
 
+acquire_update_lock() {
+  if ! mkdir "$UPDATE_LOCK_DIR" 2>/dev/null; then
+    local other_pid
+    other_pid="$(head -n1 "$UPDATE_LOCK_DIR/pid" 2>/dev/null | tr -dc '0-9' || true)"
+    if [[ -n "$other_pid" ]] && kill -0 "$other_pid" 2>/dev/null; then
+      log "Update already running (PID $other_pid); skipping this run."
+      return 1
+    fi
+    rm -rf "$UPDATE_LOCK_DIR"
+    mkdir "$UPDATE_LOCK_DIR" 2>/dev/null || { log "Failed to acquire update lock; skipping."; return 1; }
+  fi
+  printf '%s\n' "$$" > "$UPDATE_LOCK_DIR/pid"
+  return 0
+}
+
+release_update_lock() {
+  rm -rf "$UPDATE_LOCK_DIR"
+}
+
 acquire_single_instance_lock() {
   mkdir -p "$(dirname "$LOCK_FILE")"
-  : > "$LOCK_FILE"
 
   if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     local lock_pid
@@ -766,69 +904,13 @@ acquire_single_instance_lock() {
 
 save_last_run_config() {
   mkdir -p "$GLOBAL_CONFIG_DIR"
-  cat > "$LAST_RUN_CONFIG_FILE" <<EOF
-COBIEN_WORKSPACE_ROOT=$WORKSPACE_ROOT
-COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME
-COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME
-COBIEN_MASTER_ENV_FILE=$MASTER_ENV_FILE
-COBIEN_UPDATE_BRANCH=$BRANCH_NAME
-COBIEN_UPDATE_REMOTE=$REMOTE_NAME
-COBIEN_UPDATE_INTERVAL_SEC=$POLL_INTERVAL_SEC
-COBIEN_APP_LANGUAGE=$APP_LANGUAGE
-COBIEN_DEVICE_ID=$DEVICE_ID
-COBIEN_VIDEOCALL_ROOM=$VIDEOCALL_ROOM
-COBIEN_NOTIFY_API_KEY=$NOTIFY_API_KEY
-COBIEN_VIDEOCALL_DEVICE_API_KEY=$VIDEOCALL_DEVICE_API_KEY
-COBIEN_DEVICE_LOCATION=$DEVICE_LOCATION
-COBIEN_HARDWARE_MODE=$HARDWARE_MODE
-COBIEN_SETTINGS_PIN=$SETTINGS_PIN
-COBIEN_RESTART_PIN=$RESTART_PIN
-COBIEN_BACKEND_BASE_URL=$BACKEND_BASE_URL
-COBIEN_DEVICE_POLL_URL=$DEVICE_POLL_URL
-COBIEN_DEVICE_POLL_INTERVAL_SEC=$DEVICE_POLL_INTERVAL_SEC
-COBIEN_DEVICE_HEARTBEAT_URL=$DEVICE_HEARTBEAT_URL
-COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC=$DEVICE_HEARTBEAT_INTERVAL_SEC
-COBIEN_PIZARRA_NOTIFY_URL=$PIZARRA_NOTIFY_URL
-COBIEN_PIZARRA_API_URL=$PIZARRA_API_URL
-COBIEN_PIZARRA_DELETE_URL_TEMPLATE=$PIZARRA_DELETE_URL_TEMPLATE
-COBIEN_CONTACTS_API_URL=$CONTACTS_API_URL
-COBIEN_ICSO_TELEMETRY_URL=$ICSO_TELEMETRY_URL
-COBIEN_ICSO_EVENTS_URL=$ICSO_EVENTS_URL
-COBIEN_DEVICE_VIDEOCALL_SESSION_URL=$DEVICE_VIDEOCALL_SESSION_URL
-COBIEN_PORTAL_VIDEOCALL_URL=$PORTAL_VIDEOCALL_URL
-COBIEN_PORTAL_VIDEOCALL_DEVICE_URL=$PORTAL_VIDEOCALL_DEVICE_URL
-COBIEN_PORTAL_CALL_ANSWERED_URL=$PORTAL_CALL_ANSWERED_URL
-COBIEN_MQTT_LOCAL_BROKER=$MQTT_LOCAL_BROKER
-COBIEN_MQTT_LOCAL_PORT=$MQTT_LOCAL_PORT
-COBIEN_HTTP_TIMEOUT=$HTTP_TIMEOUT_SEC
-COBIEN_TTS_ENGINE=$TTS_ENGINE
-COBIEN_TTS_PIPER_BIN=$TTS_PIPER_BIN
-COBIEN_TTS_PIPER_MODEL_ES=$TTS_PIPER_MODEL_ES
-COBIEN_TTS_PIPER_MODEL_FR=$TTS_PIPER_MODEL_FR
-COBIEN_TTS_PIPER_MODEL_ES_MALE=$TTS_PIPER_MODEL_ES_MALE
-COBIEN_TTS_PIPER_MODEL_ES_FEMALE=$TTS_PIPER_MODEL_ES_FEMALE
-COBIEN_TTS_PIPER_MODEL_FR_MALE=$TTS_PIPER_MODEL_FR_MALE
-COBIEN_TTS_PIPER_MODEL_FR_FEMALE=$TTS_PIPER_MODEL_FR_FEMALE
-COBIEN_TTS_PIPER_MODEL_ES_URL=$TTS_PIPER_MODEL_ES_URL
-COBIEN_TTS_PIPER_MODEL_FR_URL=$TTS_PIPER_MODEL_FR_URL
-COBIEN_TTS_PIPER_MODEL_ES_MALE_URL=$TTS_PIPER_MODEL_ES_MALE_URL
-COBIEN_TTS_PIPER_MODEL_ES_FEMALE_URL=$TTS_PIPER_MODEL_ES_FEMALE_URL
-COBIEN_TTS_PIPER_MODEL_FR_MALE_URL=$TTS_PIPER_MODEL_FR_MALE_URL
-COBIEN_TTS_PIPER_MODEL_FR_FEMALE_URL=$TTS_PIPER_MODEL_FR_FEMALE_URL
-COBIEN_TTS_PIPER_VOICE_ES=$TTS_PIPER_VOICE_ES
-COBIEN_TTS_PIPER_VOICE_FR=$TTS_PIPER_VOICE_FR
-COBIEN_CRON_SCHEDULE=$CRON_SCHEDULE
-COBIEN_INSTALL_SYSTEMD_USER=$INSTALL_SYSTEMD_USER
-COBIEN_INSTALL_CRON=$INSTALL_CRON
-COBIEN_ENABLE_WATCH=$ENABLE_WATCH
-COBIEN_RECREATE_VENV=$RECREATE_VENV
-COBIEN_INSTALL_SYSTEM_DEPS=$INSTALL_SYSTEM_DEPS
-COBIEN_TTS_PIPER_PROVIDER=$TTS_PIPER_PROVIDER
-COBIEN_TTS_PIPER_VERSION=$TTS_PIPER_VERSION
-COBIEN_NON_INTERACTIVE=$NON_INTERACTIVE
-COBIEN_AUTO_CONFIRM=$AUTO_CONFIRM
-COBIEN_BOOTSTRAP_PYTHON_VERSION=$PYTHON_REQUEST
+  _emit_cobien_env_pairs > "$LAST_RUN_CONFIG_FILE"
+  # Append path vars not in the mapping arrays (set by resolve_paths after env load).
+  cat >> "$LAST_RUN_CONFIG_FILE" <<EOF
+COBIEN_FRONTEND_REPO=$FRONTEND_REPO
+COBIEN_MQTT_REPO=$MQTT_REPO
 EOF
+  chmod 600 "$LAST_RUN_CONFIG_FILE"
   log "Last run configuration saved to: $LAST_RUN_CONFIG_FILE"
 }
 
@@ -836,92 +918,8 @@ load_last_run_config() {
   if [[ ! -f "$LAST_RUN_CONFIG_FILE" ]]; then
     return 1
   fi
-  set -a
-  source "$LAST_RUN_CONFIG_FILE"
-  set +a
-
-  WORKSPACE_ROOT="${COBIEN_WORKSPACE_ROOT:-$WORKSPACE_ROOT}"
-  FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
-  MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-$MQTT_REPO_NAME}"
-  MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-$MASTER_ENV_FILE}"
-  BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-$BRANCH_NAME}"
-  REMOTE_NAME="${COBIEN_UPDATE_REMOTE:-$REMOTE_NAME}"
-  POLL_INTERVAL_SEC="${COBIEN_UPDATE_INTERVAL_SEC:-$POLL_INTERVAL_SEC}"
-  APP_LANGUAGE="${COBIEN_APP_LANGUAGE:-$APP_LANGUAGE}"
-  DEVICE_ID="${COBIEN_DEVICE_ID:-$DEVICE_ID}"
-  VIDEOCALL_ROOM="${COBIEN_VIDEOCALL_ROOM:-$VIDEOCALL_ROOM}"
-  NOTIFY_API_KEY="${COBIEN_NOTIFY_API_KEY:-$NOTIFY_API_KEY}"
-  VIDEOCALL_DEVICE_API_KEY="${COBIEN_VIDEOCALL_DEVICE_API_KEY:-$VIDEOCALL_DEVICE_API_KEY}"
-  DEVICE_LOCATION="${COBIEN_DEVICE_LOCATION:-$DEVICE_LOCATION}"
-  HARDWARE_MODE="${COBIEN_HARDWARE_MODE:-$HARDWARE_MODE}"
-  SETTINGS_PIN="${COBIEN_SETTINGS_PIN:-$SETTINGS_PIN}"
-  RESTART_PIN="${COBIEN_RESTART_PIN:-$RESTART_PIN}"
-  WEATHER_CITIES_JSON="${COBIEN_WEATHER_CITIES_JSON:-$WEATHER_CITIES_JSON}"
-  WEATHER_CITY_CATALOG_JSON="${COBIEN_WEATHER_CITY_CATALOG_JSON:-$WEATHER_CITY_CATALOG_JSON}"
-  WEATHER_PRIMARY_CITY="${COBIEN_WEATHER_PRIMARY_CITY:-$WEATHER_PRIMARY_CITY}"
-  BUTTON_COLORS_JSON="${COBIEN_BUTTON_COLORS_JSON:-$BUTTON_COLORS_JSON}"
-  RFID_ACTIONS_JSON="${COBIEN_RFID_ACTIONS_JSON:-$RFID_ACTIONS_JSON}"
-  MICROPHONE_DEVICE="${COBIEN_MICROPHONE_DEVICE:-$MICROPHONE_DEVICE}"
-  AUDIO_OUTPUT_DEVICE="${COBIEN_AUDIO_OUTPUT_DEVICE:-$AUDIO_OUTPUT_DEVICE}"
-  JOKE_CATEGORY="${COBIEN_JOKE_CATEGORY:-$JOKE_CATEGORY}"
-  IDLE_TIMEOUT_SEC="${COBIEN_IDLE_TIMEOUT_SEC:-$IDLE_TIMEOUT_SEC}"
-  NOTIFICATIONS_JSON="${COBIEN_NOTIFICATIONS_JSON:-$NOTIFICATIONS_JSON}"
-  BACKEND_BASE_URL="${COBIEN_BACKEND_BASE_URL:-$BACKEND_BASE_URL}"
-  DEVICE_POLL_URL="${COBIEN_DEVICE_POLL_URL:-$DEVICE_POLL_URL}"
-  DEVICE_POLL_INTERVAL_SEC="${COBIEN_DEVICE_POLL_INTERVAL_SEC:-$DEVICE_POLL_INTERVAL_SEC}"
-  DEVICE_HEARTBEAT_URL="${COBIEN_DEVICE_HEARTBEAT_URL:-$DEVICE_HEARTBEAT_URL}"
-  DEVICE_HEARTBEAT_INTERVAL_SEC="${COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC:-$DEVICE_HEARTBEAT_INTERVAL_SEC}"
-  OWM_API_KEY="${OWM_API_KEY:-$OWM_API_KEY}"
-  NEWS_API_KEY="${NEWS_API_KEY:-$NEWS_API_KEY}"
-  MONGO_URI="${MONGO_URI:-$MONGO_URI}"
-  PIZARRA_NOTIFY_URL="${COBIEN_PIZARRA_NOTIFY_URL:-$PIZARRA_NOTIFY_URL}"
-  PIZARRA_API_URL="${COBIEN_PIZARRA_API_URL:-$PIZARRA_API_URL}"
-  PIZARRA_DELETE_URL_TEMPLATE="${COBIEN_PIZARRA_DELETE_URL_TEMPLATE:-$PIZARRA_DELETE_URL_TEMPLATE}"
-  CONTACTS_API_URL="${COBIEN_CONTACTS_API_URL:-$CONTACTS_API_URL}"
-  ICSO_TELEMETRY_URL="${COBIEN_ICSO_TELEMETRY_URL:-$ICSO_TELEMETRY_URL}"
-  ICSO_EVENTS_URL="${COBIEN_ICSO_EVENTS_URL:-$ICSO_EVENTS_URL}"
-  DEVICE_VIDEOCALL_SESSION_URL="${COBIEN_DEVICE_VIDEOCALL_SESSION_URL:-$DEVICE_VIDEOCALL_SESSION_URL}"
-  PORTAL_VIDEOCALL_URL="${COBIEN_PORTAL_VIDEOCALL_URL:-$PORTAL_VIDEOCALL_URL}"
-  PORTAL_VIDEOCALL_DEVICE_URL="${COBIEN_PORTAL_VIDEOCALL_DEVICE_URL:-$PORTAL_VIDEOCALL_DEVICE_URL}"
-  PORTAL_CALL_ANSWERED_URL="${COBIEN_PORTAL_CALL_ANSWERED_URL:-$PORTAL_CALL_ANSWERED_URL}"
-  MQTT_LOCAL_BROKER="${COBIEN_MQTT_LOCAL_BROKER:-$MQTT_LOCAL_BROKER}"
-  MQTT_LOCAL_PORT="${COBIEN_MQTT_LOCAL_PORT:-$MQTT_LOCAL_PORT}"
-  HTTP_TIMEOUT_SEC="${COBIEN_HTTP_TIMEOUT:-$HTTP_TIMEOUT_SEC}"
-  TTS_ENGINE="${COBIEN_TTS_ENGINE:-$TTS_ENGINE}"
-  TTS_RATE="${COBIEN_TTS_RATE:-$TTS_RATE}"
-  TTS_VOLUME="${COBIEN_TTS_VOLUME:-$TTS_VOLUME}"
-  TTS_PIPER_BIN="${COBIEN_TTS_PIPER_BIN:-$TTS_PIPER_BIN}"
-  TTS_PIPER_MODEL_ES="${COBIEN_TTS_PIPER_MODEL_ES:-$TTS_PIPER_MODEL_ES}"
-  TTS_PIPER_MODEL_FR="${COBIEN_TTS_PIPER_MODEL_FR:-$TTS_PIPER_MODEL_FR}"
-  TTS_PIPER_MODEL_ES_MALE="${COBIEN_TTS_PIPER_MODEL_ES_MALE:-$TTS_PIPER_MODEL_ES_MALE}"
-  TTS_PIPER_MODEL_ES_FEMALE="${COBIEN_TTS_PIPER_MODEL_ES_FEMALE:-$TTS_PIPER_MODEL_ES_FEMALE}"
-  TTS_PIPER_MODEL_FR_MALE="${COBIEN_TTS_PIPER_MODEL_FR_MALE:-$TTS_PIPER_MODEL_FR_MALE}"
-  TTS_PIPER_MODEL_FR_FEMALE="${COBIEN_TTS_PIPER_MODEL_FR_FEMALE:-$TTS_PIPER_MODEL_FR_FEMALE}"
-  TTS_PIPER_MODEL_ES_URL="${COBIEN_TTS_PIPER_MODEL_ES_URL:-$TTS_PIPER_MODEL_ES_URL}"
-  TTS_PIPER_MODEL_FR_URL="${COBIEN_TTS_PIPER_MODEL_FR_URL:-$TTS_PIPER_MODEL_FR_URL}"
-  TTS_PIPER_MODEL_ES_MALE_URL="${COBIEN_TTS_PIPER_MODEL_ES_MALE_URL:-$TTS_PIPER_MODEL_ES_MALE_URL}"
-  TTS_PIPER_MODEL_ES_FEMALE_URL="${COBIEN_TTS_PIPER_MODEL_ES_FEMALE_URL:-$TTS_PIPER_MODEL_ES_FEMALE_URL}"
-  TTS_PIPER_MODEL_FR_MALE_URL="${COBIEN_TTS_PIPER_MODEL_FR_MALE_URL:-$TTS_PIPER_MODEL_FR_MALE_URL}"
-  TTS_PIPER_MODEL_FR_FEMALE_URL="${COBIEN_TTS_PIPER_MODEL_FR_FEMALE_URL:-$TTS_PIPER_MODEL_FR_FEMALE_URL}"
-  TTS_PIPER_VOICE_ES="${COBIEN_TTS_PIPER_VOICE_ES:-$TTS_PIPER_VOICE_ES}"
-  TTS_PIPER_VOICE_FR="${COBIEN_TTS_PIPER_VOICE_FR:-$TTS_PIPER_VOICE_FR}"
-  DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-$DISABLE_SYSTEM_SLEEP}"
-  OPENWEATHER_CURRENT_URL="${COBIEN_OPENWEATHER_CURRENT_URL:-$OPENWEATHER_CURRENT_URL}"
-  OPENWEATHER_FORECAST_URL="${COBIEN_OPENWEATHER_FORECAST_URL:-$OPENWEATHER_FORECAST_URL}"
-  NEWS_API_URL="${COBIEN_NEWS_API_URL:-$NEWS_API_URL}"
-  OPEN_METEO_URL="${COBIEN_OPEN_METEO_URL:-$OPEN_METEO_URL}"
-  NOMINATIM_SEARCH_URL="${COBIEN_NOMINATIM_SEARCH_URL:-$NOMINATIM_SEARCH_URL}"
-  CRON_SCHEDULE="${COBIEN_CRON_SCHEDULE:-$CRON_SCHEDULE}"
-  INSTALL_SYSTEMD_USER="${COBIEN_INSTALL_SYSTEMD_USER:-$INSTALL_SYSTEMD_USER}"
-  INSTALL_CRON="${COBIEN_INSTALL_CRON:-$INSTALL_CRON}"
-  ENABLE_WATCH="${COBIEN_ENABLE_WATCH:-$ENABLE_WATCH}"
-  RECREATE_VENV="${COBIEN_RECREATE_VENV:-$RECREATE_VENV}"
-  INSTALL_SYSTEM_DEPS="${COBIEN_INSTALL_SYSTEM_DEPS:-$INSTALL_SYSTEM_DEPS}"
-  TTS_PIPER_PROVIDER="${COBIEN_TTS_PIPER_PROVIDER:-$TTS_PIPER_PROVIDER}"
-  TTS_PIPER_VERSION="${COBIEN_TTS_PIPER_VERSION:-$TTS_PIPER_VERSION}"
-  NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-$NON_INTERACTIVE}"
-  AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-$AUTO_CONFIRM}"
-  PYTHON_REQUEST="${COBIEN_BOOTSTRAP_PYTHON_VERSION:-$PYTHON_REQUEST}"
+  safe_source_env_file "$LAST_RUN_CONFIG_FILE"
+  _absorb_cobien_env_vars
   normalize_device_identity
   set_service_defaults
   return 0
@@ -1033,80 +1031,9 @@ load_master_env_if_present() {
   fi
 
   log "Loading deployment env: $MASTER_ENV_FILE"
-  set -a
-  source "$MASTER_ENV_FILE"
-  set +a
-
-  WORKSPACE_ROOT="${COBIEN_WORKSPACE_ROOT:-$WORKSPACE_ROOT}"
-  FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
-  MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-$MQTT_REPO_NAME}"
-  BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-$BRANCH_NAME}"
-  REMOTE_NAME="${COBIEN_UPDATE_REMOTE:-$REMOTE_NAME}"
-  POLL_INTERVAL_SEC="${COBIEN_UPDATE_INTERVAL_SEC:-$POLL_INTERVAL_SEC}"
-  APP_LANGUAGE="${COBIEN_APP_LANGUAGE:-$APP_LANGUAGE}"
-  DEVICE_ID="${COBIEN_DEVICE_ID:-$DEVICE_ID}"
-  VIDEOCALL_ROOM="${COBIEN_VIDEOCALL_ROOM:-$VIDEOCALL_ROOM}"
-  NOTIFY_API_KEY="${COBIEN_NOTIFY_API_KEY:-$NOTIFY_API_KEY}"
-  VIDEOCALL_DEVICE_API_KEY="${COBIEN_VIDEOCALL_DEVICE_API_KEY:-$VIDEOCALL_DEVICE_API_KEY}"
-  DEVICE_LOCATION="${COBIEN_DEVICE_LOCATION:-$DEVICE_LOCATION}"
-  HARDWARE_MODE="${COBIEN_HARDWARE_MODE:-$HARDWARE_MODE}"
-  SETTINGS_PIN="${COBIEN_SETTINGS_PIN:-$SETTINGS_PIN}"
-  RESTART_PIN="${COBIEN_RESTART_PIN:-$RESTART_PIN}"
-  WEATHER_CITIES_JSON="${COBIEN_WEATHER_CITIES_JSON:-$WEATHER_CITIES_JSON}"
-  WEATHER_CITY_CATALOG_JSON="${COBIEN_WEATHER_CITY_CATALOG_JSON:-$WEATHER_CITY_CATALOG_JSON}"
-  WEATHER_PRIMARY_CITY="${COBIEN_WEATHER_PRIMARY_CITY:-$WEATHER_PRIMARY_CITY}"
-  BUTTON_COLORS_JSON="${COBIEN_BUTTON_COLORS_JSON:-$BUTTON_COLORS_JSON}"
-  RFID_ACTIONS_JSON="${COBIEN_RFID_ACTIONS_JSON:-$RFID_ACTIONS_JSON}"
-  MICROPHONE_DEVICE="${COBIEN_MICROPHONE_DEVICE:-$MICROPHONE_DEVICE}"
-  AUDIO_OUTPUT_DEVICE="${COBIEN_AUDIO_OUTPUT_DEVICE:-$AUDIO_OUTPUT_DEVICE}"
-  JOKE_CATEGORY="${COBIEN_JOKE_CATEGORY:-$JOKE_CATEGORY}"
-  IDLE_TIMEOUT_SEC="${COBIEN_IDLE_TIMEOUT_SEC:-$IDLE_TIMEOUT_SEC}"
-  NOTIFICATIONS_JSON="${COBIEN_NOTIFICATIONS_JSON:-$NOTIFICATIONS_JSON}"
-  BACKEND_BASE_URL="${COBIEN_BACKEND_BASE_URL:-$BACKEND_BASE_URL}"
-  DEVICE_POLL_URL="${COBIEN_DEVICE_POLL_URL:-$DEVICE_POLL_URL}"
-  DEVICE_POLL_INTERVAL_SEC="${COBIEN_DEVICE_POLL_INTERVAL_SEC:-$DEVICE_POLL_INTERVAL_SEC}"
-  DEVICE_HEARTBEAT_URL="${COBIEN_DEVICE_HEARTBEAT_URL:-$DEVICE_HEARTBEAT_URL}"
-  DEVICE_HEARTBEAT_INTERVAL_SEC="${COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC:-$DEVICE_HEARTBEAT_INTERVAL_SEC}"
-  OWM_API_KEY="${OWM_API_KEY:-$OWM_API_KEY}"
-  NEWS_API_KEY="${NEWS_API_KEY:-$NEWS_API_KEY}"
-  MONGO_URI="${MONGO_URI:-$MONGO_URI}"
-  PIZARRA_NOTIFY_URL="${COBIEN_PIZARRA_NOTIFY_URL:-$PIZARRA_NOTIFY_URL}"
-  PIZARRA_API_URL="${COBIEN_PIZARRA_API_URL:-$PIZARRA_API_URL}"
-  PIZARRA_DELETE_URL_TEMPLATE="${COBIEN_PIZARRA_DELETE_URL_TEMPLATE:-$PIZARRA_DELETE_URL_TEMPLATE}"
-  CONTACTS_API_URL="${COBIEN_CONTACTS_API_URL:-$CONTACTS_API_URL}"
-  ICSO_TELEMETRY_URL="${COBIEN_ICSO_TELEMETRY_URL:-$ICSO_TELEMETRY_URL}"
-  ICSO_EVENTS_URL="${COBIEN_ICSO_EVENTS_URL:-$ICSO_EVENTS_URL}"
-  DEVICE_VIDEOCALL_SESSION_URL="${COBIEN_DEVICE_VIDEOCALL_SESSION_URL:-$DEVICE_VIDEOCALL_SESSION_URL}"
-  PORTAL_VIDEOCALL_URL="${COBIEN_PORTAL_VIDEOCALL_URL:-$PORTAL_VIDEOCALL_URL}"
-  PORTAL_VIDEOCALL_DEVICE_URL="${COBIEN_PORTAL_VIDEOCALL_DEVICE_URL:-$PORTAL_VIDEOCALL_DEVICE_URL}"
-  PORTAL_CALL_ANSWERED_URL="${COBIEN_PORTAL_CALL_ANSWERED_URL:-$PORTAL_CALL_ANSWERED_URL}"
-  MQTT_LOCAL_BROKER="${COBIEN_MQTT_LOCAL_BROKER:-$MQTT_LOCAL_BROKER}"
-  MQTT_LOCAL_PORT="${COBIEN_MQTT_LOCAL_PORT:-$MQTT_LOCAL_PORT}"
-  HTTP_TIMEOUT_SEC="${COBIEN_HTTP_TIMEOUT:-$HTTP_TIMEOUT_SEC}"
-  TTS_ENGINE="${COBIEN_TTS_ENGINE:-$TTS_ENGINE}"
-  TTS_RATE="${COBIEN_TTS_RATE:-$TTS_RATE}"
-  TTS_VOLUME="${COBIEN_TTS_VOLUME:-$TTS_VOLUME}"
-  TTS_PIPER_BIN="${COBIEN_TTS_PIPER_BIN:-$TTS_PIPER_BIN}"
-  TTS_PIPER_MODEL_ES="${COBIEN_TTS_PIPER_MODEL_ES:-$TTS_PIPER_MODEL_ES}"
-  TTS_PIPER_MODEL_FR="${COBIEN_TTS_PIPER_MODEL_FR:-$TTS_PIPER_MODEL_FR}"
-  TTS_PIPER_MODEL_ES_MALE="${COBIEN_TTS_PIPER_MODEL_ES_MALE:-$TTS_PIPER_MODEL_ES_MALE}"
-  TTS_PIPER_MODEL_ES_FEMALE="${COBIEN_TTS_PIPER_MODEL_ES_FEMALE:-$TTS_PIPER_MODEL_ES_FEMALE}"
-  TTS_PIPER_MODEL_FR_MALE="${COBIEN_TTS_PIPER_MODEL_FR_MALE:-$TTS_PIPER_MODEL_FR_MALE}"
-  TTS_PIPER_MODEL_FR_FEMALE="${COBIEN_TTS_PIPER_MODEL_FR_FEMALE:-$TTS_PIPER_MODEL_FR_FEMALE}"
-  TTS_PIPER_MODEL_ES_URL="${COBIEN_TTS_PIPER_MODEL_ES_URL:-$TTS_PIPER_MODEL_ES_URL}"
-  TTS_PIPER_MODEL_FR_URL="${COBIEN_TTS_PIPER_MODEL_FR_URL:-$TTS_PIPER_MODEL_FR_URL}"
-  TTS_PIPER_MODEL_ES_MALE_URL="${COBIEN_TTS_PIPER_MODEL_ES_MALE_URL:-$TTS_PIPER_MODEL_ES_MALE_URL}"
-  TTS_PIPER_MODEL_ES_FEMALE_URL="${COBIEN_TTS_PIPER_MODEL_ES_FEMALE_URL:-$TTS_PIPER_MODEL_ES_FEMALE_URL}"
-  TTS_PIPER_MODEL_FR_MALE_URL="${COBIEN_TTS_PIPER_MODEL_FR_MALE_URL:-$TTS_PIPER_MODEL_FR_MALE_URL}"
-  TTS_PIPER_MODEL_FR_FEMALE_URL="${COBIEN_TTS_PIPER_MODEL_FR_FEMALE_URL:-$TTS_PIPER_MODEL_FR_FEMALE_URL}"
-  TTS_PIPER_VOICE_ES="${COBIEN_TTS_PIPER_VOICE_ES:-$TTS_PIPER_VOICE_ES}"
-  TTS_PIPER_VOICE_FR="${COBIEN_TTS_PIPER_VOICE_FR:-$TTS_PIPER_VOICE_FR}"
-  DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-$DISABLE_SYSTEM_SLEEP}"
-  OPENWEATHER_CURRENT_URL="${COBIEN_OPENWEATHER_CURRENT_URL:-$OPENWEATHER_CURRENT_URL}"
-  OPENWEATHER_FORECAST_URL="${COBIEN_OPENWEATHER_FORECAST_URL:-$OPENWEATHER_FORECAST_URL}"
-  NEWS_API_URL="${COBIEN_NEWS_API_URL:-$NEWS_API_URL}"
-  OPEN_METEO_URL="${COBIEN_OPEN_METEO_URL:-$OPEN_METEO_URL}"
-  NOMINATIM_SEARCH_URL="${COBIEN_NOMINATIM_SEARCH_URL:-$NOMINATIM_SEARCH_URL}"
+  safe_source_env_file "$MASTER_ENV_FILE"
+  # Skip COBIEN_MASTER_ENV_FILE: the path we are reading from should not override itself.
+  _absorb_cobien_env_vars COBIEN_MASTER_ENV_FILE
   normalize_device_identity
   set_service_defaults
   resolve_paths
@@ -1205,7 +1132,8 @@ start_can_logger_background() {
   can_log_file="$(build_dated_log_path "can-bus")"
   printf '[%s] [CAN] Starting candump on can0\n' "$(date '+%Y-%m-%d %H:%M:%S')" >>"$can_log_file"
   pkill -f "candump can0" >/dev/null 2>&1 || true
-  nohup candump can0 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$can_log_file" &
+  ( nohup candump can0 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$can_log_file" 2>&1 ) &
+  disown $!
   log "CAN: Logging CAN traffic to: $can_log_file"
 }
 
@@ -1214,20 +1142,43 @@ runtime_bridge_command() {
 echo '[BRIDGE] Build and launch'
 set -e
 cd "$BRIDGE_DIR" || exit
-make clean
 make -j
 ./cobien_bridge "$CAN_CONFIG"
 EOF
+}
+
+wait_for_bridge() {
+  local timeout="${1:-30}"
+  local elapsed=0
+  while (( elapsed < timeout )); do
+    if pgrep -f "/cobien_bridge" >/dev/null 2>&1; then
+      log "Bridge process ready after ${elapsed}s"
+      return 0
+    fi
+    sleep 1
+    elapsed=$(( elapsed + 1 ))
+  done
+  log "WARN: Bridge process did not appear within ${timeout}s; launching app anyway"
+  return 1
 }
 
 runtime_app_command() {
   cat <<EOF
 echo '[APP] Launching frontend with uv'
 cd "$FRONTEND_APP_DIR" || exit
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  source "$ENV_FILE"
-  set +a
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r _line || [[ -n "\$_line" ]]; do
+    [[ -z "\$_line" || "\$_line" == '#'* ]] && continue
+    _key="\${_line%%=*}"
+    _val="\${_line#*=}"
+    [[ "\$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*\$ ]] || continue
+    if [[ "\$_val" == '"'*'"' ]]; then
+      _val="\${_val:1:\${#_val}-2}"
+      _val="\${_val//\\\\\"/\"}"
+      _val="\${_val//\\\\\\\\/\\\\}"
+    fi
+    export "\$_key=\$_val"
+  done < "$ENV_FILE"
 fi
 if command -v "$UV_BIN" >/dev/null 2>&1; then
   "$UV_BIN" run --python "$PYTHON_REQUEST" --project "$FRONTEND_APP_DIR" mainApp.py
@@ -1241,19 +1192,6 @@ fi
 EOF
 }
 
-runtime_can_open_terminals() {
-  [[ -n "${DISPLAY:-}" ]] && command -v gnome-terminal >/dev/null 2>&1
-}
-
-runtime_launch_named_terminal() {
-  local title="$1"
-  local command_text="$2"
-  if runtime_can_open_terminals; then
-    gnome-terminal --title="$title" -- bash -lc "$command_text" || return 1
-    return 0
-  fi
-  return 1
-}
 
 runtime_launch_background() {
   local name="$1"
@@ -1263,7 +1201,8 @@ runtime_launch_background() {
   cleanup_old_logs "$name"
   log "FALLBACK: Launching $name in background. Log: $log_file"
   printf '[%s] [%s] Starting background command\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$name" >>"$log_file"
-  nohup bash -lc "$command_text" 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" &
+  ( nohup bash -lc "$command_text" | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" 2>&1 ) &
+  disown $!
 }
 
 build_dated_log_path() {
@@ -1397,11 +1336,7 @@ launch_runtime() {
   log "PATHS: UV_BIN=$UV_BIN"
   log "PATHS: FRONTEND_APP_DIR=$FRONTEND_APP_DIR"
   log "PATHS: LOG_DIR=$LOG_DIR"
-  if runtime_can_open_terminals; then
-    log "TERM: gnome-terminal available on DISPLAY=${DISPLAY:-}"
-  else
-    log "WARN: TERM: No graphical terminal available, using fallback mode"
-  fi
+  log "TERM: Using background launch mode (runtime_launch_background)"
 
   if [[ "$relaunch_after_update" == "1" ]]; then
     log "CLEAN: Update relaunch detected."
@@ -1418,13 +1353,10 @@ launch_runtime() {
     log "WARN: Hardware runtime disabled (mode=$HARDWARE_MODE). Skipping CAN setup/logger/bridge."
   fi
 
-  sleep 2
-
   if should_enable_hardware_runtime; then
     runtime_launch_background "mqtt-can-bridge" "$(runtime_bridge_command)"
+    wait_for_bridge 30 || true
   fi
-
-  sleep 2
 
   runtime_launch_background "cobien-app" "$(runtime_app_command)"
 }
@@ -1451,7 +1383,7 @@ run_passive_supervision_loop() {
   log "Passive supervision enabled; update checks are delegated to external triggers."
   while true; do
     ensure_runtime_supervision
-    sleep 2
+    sleep $(( 8 + RANDOM % 5 ))
   done
 }
 
@@ -1636,37 +1568,75 @@ validate_runtime_file_dependencies() {
   [[ -f "$LAUNCHER_ROOT/import-systemd-user-env.sh" ]] || { log "session env import helper missing: $LAUNCHER_ROOT/import-systemd-user-env.sh"; exit 1; }
 }
 
+can_perform_privileged_installs() {
+  [[ "$MODE" == "setup" ]] && ! is_running_inside_systemd_user_service
+}
+
+installed_apt_package_version() {
+  local package_name="$1"
+  dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true
+}
+
+append_missing_apt_package() {
+  local package_name="$1"
+  local target_array_name="$2"
+  local current_version=""
+
+  current_version="$(installed_apt_package_version "$package_name")"
+  if [[ -n "$current_version" ]]; then
+    log "APT: Reusing installed package '$package_name' ($current_version)"
+    return 0
+  fi
+
+  eval "case \" \${${target_array_name}[*]} \" in *\" ${package_name} \"*) ;; *) ${target_array_name}+=(\"${package_name}\") ;; esac"
+}
+
 checkout_branch() {
   local repo="$1"
   git -C "$repo" checkout "$BRANCH_NAME"
 }
 
 install_system_deps_fn() {
+  local required_packages=(
+    git curl wget build-essential cmake pkg-config
+    python3 python3-venv python3-pip
+    wmctrl gnome-terminal can-utils iproute2 xclip xsel
+    alsa-utils
+    pulseaudio-utils pipewire-pulse wireplumber pavucontrol
+    mosquitto mosquitto-clients
+    libasound2-dev portaudio19-dev
+    libgl1 libegl1 libglib2.0-0
+    libgstreamer1.0-0 gstreamer1.0-plugins-base
+    gstreamer1.0-plugins-good gstreamer1.0-libav
+    libpulse0 libmosquitto-dev libcjson-dev
+    libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4
+    libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0
+    libxcomposite1 libxdamage1 libxrandr2 libnss3
+    libatk-bridge2.0-0 libgtk-3-0
+  )
+  local missing_packages=()
+  local package_name
+
   if [[ "$INSTALL_SYSTEM_DEPS" != "1" ]]; then
     log "Skipping system dependencies"
     return
   fi
 
+  for package_name in "${required_packages[@]}"; do
+    append_missing_apt_package "$package_name" missing_packages
+  done
+
+  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    log "APT: All launcher system dependencies are already installed."
+    return
+  fi
+
   log_phase_banner "System dependencies" "Installing OS packages required by the launcher, audio stack, GTK/WebRTC runtime and build tools."
+  log "APT: Missing launcher system packages: ${missing_packages[*]}"
   animate_status "Refreshing apt metadata"
   sudo apt update
   animate_status "Installing base runtime packages"
-  sudo apt install -y \
-    git curl wget build-essential cmake pkg-config \
-    python3 python3-venv python3-pip \
-    wmctrl gnome-terminal can-utils iproute2 xclip xsel \
-    alsa-utils \
-    pulseaudio-utils pipewire-pulse wireplumber pavucontrol \
-    mosquitto mosquitto-clients \
-    libasound2-dev portaudio19-dev \
-    libgl1 libegl1 libglib2.0-0 \
-    libgstreamer1.0-0 gstreamer1.0-plugins-base \
-    gstreamer1.0-plugins-good gstreamer1.0-libav \
-    libpulse0 libmosquitto-dev libcjson-dev \
-    libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
-    libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 \
-    libxcomposite1 libxdamage1 libxrandr2 libnss3 \
-    libatk-bridge2.0-0 libgtk-3-0
+  sudo apt install -y "${missing_packages[@]}"
   log "OK: System dependencies installed. Python runtime version selection is handled by uv."
 }
 
@@ -1674,24 +1644,32 @@ ensure_runtime_dependencies() {
   local missing_packages=()
   local apt_updated="0"
 
-  command -v git >/dev/null 2>&1 || missing_packages+=("git")
-  command -v curl >/dev/null 2>&1 || missing_packages+=("curl")
-  command -v wget >/dev/null 2>&1 || missing_packages+=("wget")
-  command -v make >/dev/null 2>&1 || missing_packages+=("build-essential")
-  command -v gcc >/dev/null 2>&1 || missing_packages+=("build-essential")
-  command -v cmake >/dev/null 2>&1 || missing_packages+=("cmake")
-  command -v candump >/dev/null 2>&1 || missing_packages+=("can-utils")
-  command -v ip >/dev/null 2>&1 || missing_packages+=("iproute2")
-  command -v xclip >/dev/null 2>&1 || missing_packages+=("xclip")
-  command -v xsel >/dev/null 2>&1 || missing_packages+=("xsel")
-  command -v aplay >/dev/null 2>&1 || missing_packages+=("alsa-utils")
-  command -v pactl >/dev/null 2>&1 || missing_packages+=("pulseaudio-utils")
-  dpkg -s pipewire-pulse >/dev/null 2>&1 || missing_packages+=("pipewire-pulse")
-  dpkg -s wireplumber >/dev/null 2>&1 || missing_packages+=("wireplumber")
-  command -v mosquitto >/dev/null 2>&1 || missing_packages+=("mosquitto" "mosquitto-clients")
+  command -v git >/dev/null 2>&1 || append_missing_apt_package "git" missing_packages
+  command -v curl >/dev/null 2>&1 || append_missing_apt_package "curl" missing_packages
+  command -v wget >/dev/null 2>&1 || append_missing_apt_package "wget" missing_packages
+  command -v make >/dev/null 2>&1 || append_missing_apt_package "build-essential" missing_packages
+  command -v gcc >/dev/null 2>&1 || append_missing_apt_package "build-essential" missing_packages
+  command -v cmake >/dev/null 2>&1 || append_missing_apt_package "cmake" missing_packages
+  command -v candump >/dev/null 2>&1 || append_missing_apt_package "can-utils" missing_packages
+  command -v ip >/dev/null 2>&1 || append_missing_apt_package "iproute2" missing_packages
+  command -v xclip >/dev/null 2>&1 || append_missing_apt_package "xclip" missing_packages
+  command -v xsel >/dev/null 2>&1 || append_missing_apt_package "xsel" missing_packages
+  command -v aplay >/dev/null 2>&1 || append_missing_apt_package "alsa-utils" missing_packages
+  command -v pactl >/dev/null 2>&1 || append_missing_apt_package "pulseaudio-utils" missing_packages
+  append_missing_apt_package "pipewire-pulse" missing_packages
+  append_missing_apt_package "wireplumber" missing_packages
+  command -v mosquitto >/dev/null 2>&1 || {
+    append_missing_apt_package "mosquitto" missing_packages
+    append_missing_apt_package "mosquitto-clients" missing_packages
+  }
 
   if [[ "${#missing_packages[@]}" -gt 0 ]]; then
     log "Missing runtime dependencies detected: ${missing_packages[*]}"
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Missing runtime dependencies cannot be installed during '$MODE'."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh so the installer can prepare the system before reboot."
+      return 1
+    fi
     log "Installing missing runtime dependencies (sudo may ask for password)..."
     sudo apt update
     apt_updated="1"
@@ -1699,9 +1677,20 @@ ensure_runtime_dependencies() {
   fi
 
   if ! command -v python3 >/dev/null 2>&1; then
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Python 3 base runtime is missing and cannot be installed during '$MODE'."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh to complete the installation."
+      return 1
+    fi
     log "Python 3 base runtime missing. Installing generic python3 package so uv can bootstrap the requested interpreter."
     if [[ "$apt_updated" != "1" ]]; then sudo apt update; apt_updated="1"; fi
-    sudo apt install -y python3 python3-venv python3-pip
+    local python_packages=()
+    append_missing_apt_package "python3" python_packages
+    append_missing_apt_package "python3-venv" python_packages
+    append_missing_apt_package "python3-pip" python_packages
+    if [[ "${#python_packages[@]}" -gt 0 ]]; then
+      sudo apt install -y "${python_packages[@]}"
+    fi
   fi
 }
 
@@ -1729,6 +1718,10 @@ configure_tts_runtime() {
     if ! download_file "$download_url" "$archive_path"; then
       rm -f "$archive_path" || true
       log "Failed to download Piper runtime archive."
+      return 1
+    fi
+    if ! _verify_piper_archive "$archive_path"; then
+      rm -f "$archive_path" || true
       return 1
     fi
 
@@ -1767,6 +1760,10 @@ configure_tts_runtime() {
     log "Attempting system install of Piper from: $asset_url"
     if ! download_file "$asset_url" "$asset_tmp"; then
       log "Failed to download Piper release for system install"
+      rm -rf "$extract_dir" || true
+      return 1
+    fi
+    if ! _verify_piper_archive "$asset_tmp"; then
       rm -rf "$extract_dir" || true
       return 1
     fi
@@ -1811,6 +1808,28 @@ configure_tts_runtime() {
       return $?
     fi
     return 1
+  }
+
+  # Verify a downloaded Piper tar.gz is a valid, non-trivial gzip archive.
+  # Piper binaries are >10 MB; anything smaller is a truncated or bogus download.
+  _verify_piper_archive() {
+    local path="$1"
+    local min_bytes=5242880  # 5 MB
+    if [[ ! -f "$path" ]]; then
+      log "ERROR: Piper archive not found: $path"
+      return 1
+    fi
+    local size
+    size="$(stat -c%s "$path" 2>/dev/null || stat -f%z "$path" 2>/dev/null || echo 0)"
+    if (( size < min_bytes )); then
+      log "ERROR: Piper archive too small (${size} bytes); download may be incomplete or tampered"
+      return 1
+    fi
+    if ! tar -tzf "$path" >/dev/null 2>&1; then
+      log "ERROR: Piper archive is not a valid gzip tarball"
+      return 1
+    fi
+    return 0
   }
 
   install_piper_via_snap() {
@@ -1903,6 +1922,11 @@ configure_tts_runtime() {
   elif command -v piper >/dev/null 2>&1; then
     TTS_PIPER_BIN="$(command -v piper)"
   else
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Piper TTS selected but no Piper binary is available during '$MODE'."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh so Piper is installed before the kiosk service starts."
+      return 1
+    fi
     log "Piper TTS selected but binary not found. Trying apt install..."
     sudo apt update || true
     sudo apt install -y piper-tts || true
@@ -1937,6 +1961,10 @@ configure_tts_runtime() {
         log "Attempting to download Piper binary from: $asset_url"
         if ! download_file "$asset_url" "$asset_tmp"; then
           log "Failed to download Piper release asset: $asset_url"
+          rm -rf "$extract_dir" || true
+          return 1
+        fi
+        if ! _verify_piper_archive "$asset_tmp"; then
           rm -rf "$extract_dir" || true
           return 1
         fi
@@ -2333,6 +2361,8 @@ for section, keys in PRESERVED_LOCAL_CONFIG_KEYS.items():
 
 with open(config_file, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=4, ensure_ascii=False)
+import os, stat
+os.chmod(config_file, stat.S_IRUSR | stat.S_IWUSR)
 PY
 
   log "Device identity synced: language='$APP_LANGUAGE', device_id='$DEVICE_ID', videocall_room='$VIDEOCALL_ROOM', videocall_key='configured', location='$DEVICE_LOCATION', tts_engine='$TTS_ENGINE'"
@@ -2406,6 +2436,8 @@ if not isinstance(settings, dict):
 
 settings["microphone_device"] = os.getenv("COBIEN_MICROPHONE_DEVICE", "")
 config_file.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
+import stat
+config_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 PY
     log "Audio: synced microphone_device in unified config with launcher env"
   fi
@@ -2418,6 +2450,11 @@ ensure_mosquitto_running() {
   fi
 
   if ! command -v mosquitto >/dev/null 2>&1; then
+    if ! can_perform_privileged_installs; then
+      log "ERROR: Mosquitto binary not found during '$MODE' and privileged installation is not allowed."
+      log "ERROR: Re-run setup-cobien-furniture-environment.sh to install the broker before reboot."
+      return
+    fi
     log "Mosquitto binary not found. Installing it now (sudo may ask for password)..."
     sudo apt update
     sudo apt install -y mosquitto mosquitto-clients
@@ -2434,13 +2471,16 @@ ensure_mosquitto_running() {
         return
       fi
 
-      log "Starting Mosquitto service"
-      if sudo systemctl enable --now mosquitto && sudo systemctl is-active --quiet mosquitto; then
-        log "Mosquitto started successfully via systemd"
-        return
+      if can_perform_privileged_installs; then
+        log "Starting Mosquitto service"
+        if sudo systemctl enable --now mosquitto && sudo systemctl is-active --quiet mosquitto; then
+          log "Mosquitto started successfully via systemd"
+          return
+        fi
+        log "Could not start Mosquitto via systemd, trying local process fallback"
+      else
+        log "Mosquitto system service is installed but inactive during '$MODE'; trying local process fallback without sudo"
       fi
-
-      log "Could not start Mosquitto via systemd, trying local process fallback"
     else
       log "mosquitto.service not found, using local process fallback"
     fi
@@ -2449,9 +2489,14 @@ ensure_mosquitto_running() {
   fi
 
   local mosq_log_dir="${LOG_DIR:-/tmp}"
+  local mosq_state_dir="${RUNTIME_STATE_DIR:-${mosq_log_dir}}"
   local mosq_log_file="$mosq_log_dir/mosquitto-local.log"
-  mkdir -p "$mosq_log_dir"
-  nohup mosquitto -p 1883 >"$mosq_log_file" 2>&1 &
+  local mosq_cfg_file="$mosq_state_dir/mosquitto-local.conf"
+  mkdir -p "$mosq_log_dir" "$mosq_state_dir"
+  printf 'listener 1883 127.0.0.1\nallow_anonymous true\n' > "$mosq_cfg_file"
+  chmod 600 "$mosq_cfg_file"
+  ( nohup mosquitto -c "$mosq_cfg_file" >"$mosq_log_file" 2>&1 ) &
+  disown $!
   sleep 1
 
   if pgrep -x mosquitto >/dev/null 2>&1; then
@@ -2462,15 +2507,16 @@ ensure_mosquitto_running() {
 }
 
 install_can_sudoers_rule() {
-  local current_user sudoers_file
+  local current_user sudoers_file can_bitrate
   current_user="$(id -un)"
   sudoers_file="/etc/sudoers.d/cobien-can"
+  can_bitrate="${COBIEN_CAN_BITRATE:-500000}"
 
-  log "Installing passwordless CAN setup rule for user: $current_user"
+  log "Installing passwordless CAN setup rule for user: $current_user (bitrate $can_bitrate)"
   sudo /bin/sh -c "cat > '$sudoers_file' <<EOF
 $current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 down
 $current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 up
-$current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 type can bitrate *
+$current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 type can bitrate $can_bitrate
 EOF"
   sudo chmod 440 "$sudoers_file"
   sudo visudo -cf "$sudoers_file" >/dev/null
@@ -2490,6 +2536,71 @@ resolve_python_bin() {
   fi
 }
 
+_install_uv_from_github() {
+  local version="$UV_INSTALL_VERSION"
+  local arch machine
+  machine="$(uname -m)"
+  case "$machine" in
+    x86_64|amd64)   arch="x86_64-unknown-linux-gnu" ;;
+    aarch64|arm64)  arch="aarch64-unknown-linux-gnu" ;;
+    *)
+      log "ERROR: Unsupported architecture for uv installation: $machine"
+      log "ERROR: Install uv manually from https://github.com/astral-sh/uv/releases and set COBIEN_BOOTSTRAP_UV_BIN"
+      return 1
+      ;;
+  esac
+
+  local base_url="https://github.com/astral-sh/uv/releases/download/${version}"
+  local archive="uv-${arch}.tar.gz"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local archive_path="$tmp_dir/$archive"
+  local sha256_path="$tmp_dir/${archive}.sha256"
+
+  log "Downloading uv ${version} for ${arch}"
+  if ! curl -fsSL "${base_url}/${archive}" -o "$archive_path"; then
+    log "ERROR: Failed to download uv archive"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! curl -fsSL "${base_url}/${archive}.sha256" -o "$sha256_path"; then
+    log "ERROR: Failed to download uv checksum"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  # sha256sum --check expects "hash  filename" in the same dir
+  local expected_hash actual_hash
+  expected_hash="$(awk '{print $1}' "$sha256_path")"
+  actual_hash="$(sha256sum "$archive_path" | awk '{print $1}')"
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    log "ERROR: uv archive SHA256 mismatch (expected=$expected_hash got=$actual_hash) — aborting install"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  log "uv archive SHA256 verified: $actual_hash"
+
+  if ! tar -xzf "$archive_path" -C "$tmp_dir" >/dev/null 2>&1; then
+    log "ERROR: Failed to extract uv archive"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  local uv_bin
+  uv_bin="$(find "$tmp_dir" -type f -name uv -perm /111 | head -n1)"
+  if [[ -z "$uv_bin" ]]; then
+    log "ERROR: uv binary not found in archive"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  mv -f "$uv_bin" "$HOME/.local/bin/uv"
+  chmod +x "$HOME/.local/bin/uv"
+  rm -rf "$tmp_dir"
+  log "uv ${version} installed at $HOME/.local/bin/uv"
+}
+
 resolve_uv_bin() {
   if [[ -n "$UV_BIN" ]]; then
     return
@@ -2505,15 +2616,13 @@ resolve_uv_bin() {
     return
   fi
 
-  log "Installing uv with the official Astral installer"
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
-
-  if command -v uv >/dev/null 2>&1; then
-    UV_BIN="uv"
-  elif [[ -x "$HOME/.local/bin/uv" ]]; then
+  log "uv not found; installing version ${UV_INSTALL_VERSION} from GitHub releases"
+  if _install_uv_from_github; then
     UV_BIN="$HOME/.local/bin/uv"
+  elif command -v uv >/dev/null 2>&1; then
+    UV_BIN="uv"
   else
-    log "Could not locate uv after installation"
+    log "ERROR: Could not install uv"
     exit 1
   fi
 }
@@ -2541,14 +2650,14 @@ prepare_venv() {
   "$UV_BIN" sync --python "$PYTHON_REQUEST" --project "$FRONTEND_APP_DIR"
 }
 
-write_env_file() {
-  shell_quote_env_value() {
-    local value="${1-}"
-    value="${value//\\/\\\\}"
-    value="${value//\"/\\\"}"
-    printf '"%s"' "$value"
-  }
+shell_quote_env_value() {
+  local value="${1-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
 
+write_env_file() {
   local settings_pin_line=""
   local restart_pin_line=""
   if [[ -n "${COBIEN_SETTINGS_PIN:-}" ]]; then
@@ -2568,122 +2677,47 @@ write_env_file() {
 
   mkdir -p "$(dirname "$ENV_FILE")"
   {
+    # Variables from the canonical mapping (all 82 pairs).
+    local i env_key local_var
+    for i in "${!_COBIEN_ENV_KEYS[@]}"; do
+      env_key="${_COBIEN_ENV_KEYS[$i]}"
+      local_var="${_COBIEN_LOCAL_VARS[$i]}"
+      printf '%s=%s\n' "$env_key" "$(shell_quote_env_value "${!local_var}")"
+    done
+    # Path/derived variables not in the mapping.
     echo "COBIEN_FRONTEND_REPO=$(shell_quote_env_value "$FRONTEND_REPO")"
     echo "COBIEN_MQTT_REPO=$(shell_quote_env_value "$MQTT_REPO")"
-    echo "COBIEN_WORKSPACE_ROOT=$(shell_quote_env_value "$WORKSPACE_ROOT")"
     echo "COBIEN_UPDATE_ENV_FILE=$(shell_quote_env_value "$ENV_FILE")"
-    echo "COBIEN_MASTER_ENV_FILE=$(shell_quote_env_value "$MASTER_ENV_FILE")"
     echo "COBIEN_LOG_DIR=$(shell_quote_env_value "$LOG_DIR")"
     echo "COBIEN_MODELS_DIR=$(shell_quote_env_value "$MODELS_DIR")"
     echo "COBIEN_PIPER_RUNTIME_DIR=$(shell_quote_env_value "$PIPER_RUNTIME_DIR")"
     echo "COBIEN_RUNTIME_STATE_DIR=$(shell_quote_env_value "$RUNTIME_STATE_DIR")"
     echo "COBIEN_CACHE_DIR=$(shell_quote_env_value "$CACHE_DIR")"
-    echo "COBIEN_UPDATE_REMOTE=$(shell_quote_env_value "$REMOTE_NAME")"
-    echo "COBIEN_UPDATE_BRANCH=$(shell_quote_env_value "$BRANCH_NAME")"
-    echo "COBIEN_UPDATE_INTERVAL_SEC=$(shell_quote_env_value "$POLL_INTERVAL_SEC")"
-    echo "COBIEN_APP_LANGUAGE=$(shell_quote_env_value "$APP_LANGUAGE")"
-    echo "COBIEN_DEVICE_ID=$(shell_quote_env_value "$DEVICE_ID")"
-    echo "COBIEN_VIDEOCALL_ROOM=$(shell_quote_env_value "$VIDEOCALL_ROOM")"
-    echo "COBIEN_NOTIFY_API_KEY=$(shell_quote_env_value "$NOTIFY_API_KEY")"
-    echo "COBIEN_VIDEOCALL_DEVICE_API_KEY=$(shell_quote_env_value "$VIDEOCALL_DEVICE_API_KEY")"
-    echo "COBIEN_DEVICE_LOCATION=$(shell_quote_env_value "$DEVICE_LOCATION")"
-    echo "COBIEN_HARDWARE_MODE=$(shell_quote_env_value "$HARDWARE_MODE")"
-    echo "COBIEN_WEATHER_CITIES_JSON=$(shell_quote_env_value "$WEATHER_CITIES_JSON")"
-    echo "COBIEN_WEATHER_CITY_CATALOG_JSON=$(shell_quote_env_value "$WEATHER_CITY_CATALOG_JSON")"
-    echo "COBIEN_WEATHER_PRIMARY_CITY=$(shell_quote_env_value "$WEATHER_PRIMARY_CITY")"
-    echo "COBIEN_BUTTON_COLORS_JSON=$(shell_quote_env_value "$BUTTON_COLORS_JSON")"
-    echo "COBIEN_RFID_ACTIONS_JSON=$(shell_quote_env_value "$RFID_ACTIONS_JSON")"
-    echo "COBIEN_MICROPHONE_DEVICE=$(shell_quote_env_value "$MICROPHONE_DEVICE")"
-    echo "COBIEN_AUDIO_OUTPUT_DEVICE=$(shell_quote_env_value "$AUDIO_OUTPUT_DEVICE")"
-    echo "COBIEN_JOKE_CATEGORY=$(shell_quote_env_value "$JOKE_CATEGORY")"
-    echo "COBIEN_IDLE_TIMEOUT_SEC=$(shell_quote_env_value "$IDLE_TIMEOUT_SEC")"
-    echo "COBIEN_NOTIFICATIONS_JSON=$(shell_quote_env_value "$NOTIFICATIONS_JSON")"
-    echo "COBIEN_BACKEND_BASE_URL=$(shell_quote_env_value "$BACKEND_BASE_URL")"
-    echo "COBIEN_DEVICE_POLL_URL=$(shell_quote_env_value "$DEVICE_POLL_URL")"
-    echo "COBIEN_DEVICE_POLL_INTERVAL_SEC=$(shell_quote_env_value "$DEVICE_POLL_INTERVAL_SEC")"
-    echo "COBIEN_DEVICE_HEARTBEAT_URL=$(shell_quote_env_value "$DEVICE_HEARTBEAT_URL")"
-    echo "COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC=$(shell_quote_env_value "$DEVICE_HEARTBEAT_INTERVAL_SEC")"
-    echo "OWM_API_KEY=$(shell_quote_env_value "$OWM_API_KEY")"
-    echo "NEWS_API_KEY=$(shell_quote_env_value "$NEWS_API_KEY")"
-    echo "MONGO_URI=$(shell_quote_env_value "$MONGO_URI")"
-    echo "COBIEN_PIZARRA_NOTIFY_URL=$(shell_quote_env_value "$PIZARRA_NOTIFY_URL")"
-    echo "COBIEN_PIZARRA_API_URL=$(shell_quote_env_value "$PIZARRA_API_URL")"
-    echo "COBIEN_PIZARRA_DELETE_URL_TEMPLATE=$(shell_quote_env_value "$PIZARRA_DELETE_URL_TEMPLATE")"
-    echo "COBIEN_CONTACTS_API_URL=$(shell_quote_env_value "$CONTACTS_API_URL")"
-    echo "COBIEN_ICSO_TELEMETRY_URL=$(shell_quote_env_value "$ICSO_TELEMETRY_URL")"
-    echo "COBIEN_ICSO_EVENTS_URL=$(shell_quote_env_value "$ICSO_EVENTS_URL")"
-    echo "COBIEN_DEVICE_VIDEOCALL_SESSION_URL=$(shell_quote_env_value "$DEVICE_VIDEOCALL_SESSION_URL")"
-    echo "COBIEN_PORTAL_VIDEOCALL_URL=$(shell_quote_env_value "$PORTAL_VIDEOCALL_URL")"
-    echo "COBIEN_PORTAL_VIDEOCALL_DEVICE_URL=$(shell_quote_env_value "$PORTAL_VIDEOCALL_DEVICE_URL")"
-    echo "COBIEN_PORTAL_CALL_ANSWERED_URL=$(shell_quote_env_value "$PORTAL_CALL_ANSWERED_URL")"
-    echo "COBIEN_MQTT_LOCAL_BROKER=$(shell_quote_env_value "$MQTT_LOCAL_BROKER")"
-    echo "COBIEN_MQTT_LOCAL_PORT=$(shell_quote_env_value "$MQTT_LOCAL_PORT")"
-    echo "COBIEN_HTTP_TIMEOUT=$(shell_quote_env_value "$HTTP_TIMEOUT_SEC")"
-    echo "COBIEN_TTS_ENGINE=$(shell_quote_env_value "$TTS_ENGINE")"
-    echo "COBIEN_TTS_RATE=$(shell_quote_env_value "$TTS_RATE")"
-    echo "COBIEN_TTS_VOLUME=$(shell_quote_env_value "$TTS_VOLUME")"
-    echo "COBIEN_TTS_PIPER_BIN=$(shell_quote_env_value "$TTS_PIPER_BIN")"
-    echo "COBIEN_TTS_PIPER_MODEL_ES=$(shell_quote_env_value "$TTS_PIPER_MODEL_ES")"
-    echo "COBIEN_TTS_PIPER_MODEL_FR=$(shell_quote_env_value "$TTS_PIPER_MODEL_FR")"
-    echo "COBIEN_TTS_PIPER_MODEL_ES_MALE=$(shell_quote_env_value "$TTS_PIPER_MODEL_ES_MALE")"
-    echo "COBIEN_TTS_PIPER_MODEL_ES_FEMALE=$(shell_quote_env_value "$TTS_PIPER_MODEL_ES_FEMALE")"
-    echo "COBIEN_TTS_PIPER_MODEL_FR_MALE=$(shell_quote_env_value "$TTS_PIPER_MODEL_FR_MALE")"
-    echo "COBIEN_TTS_PIPER_MODEL_FR_FEMALE=$(shell_quote_env_value "$TTS_PIPER_MODEL_FR_FEMALE")"
-    echo "COBIEN_TTS_PIPER_MODEL_ES_URL=$(shell_quote_env_value "$TTS_PIPER_MODEL_ES_URL")"
-    echo "COBIEN_TTS_PIPER_MODEL_FR_URL=$(shell_quote_env_value "$TTS_PIPER_MODEL_FR_URL")"
-    echo "COBIEN_TTS_PIPER_MODEL_ES_MALE_URL=$(shell_quote_env_value "$TTS_PIPER_MODEL_ES_MALE_URL")"
-    echo "COBIEN_TTS_PIPER_MODEL_ES_FEMALE_URL=$(shell_quote_env_value "$TTS_PIPER_MODEL_ES_FEMALE_URL")"
-    echo "COBIEN_TTS_PIPER_MODEL_FR_MALE_URL=$(shell_quote_env_value "$TTS_PIPER_MODEL_FR_MALE_URL")"
-    echo "COBIEN_TTS_PIPER_MODEL_FR_FEMALE_URL=$(shell_quote_env_value "$TTS_PIPER_MODEL_FR_FEMALE_URL")"
-    echo "COBIEN_TTS_PIPER_VOICE_ES=$(shell_quote_env_value "$TTS_PIPER_VOICE_ES")"
-    echo "COBIEN_TTS_PIPER_VOICE_FR=$(shell_quote_env_value "$TTS_PIPER_VOICE_FR")"
-    echo "COBIEN_DISABLE_SYSTEM_SLEEP=$(shell_quote_env_value "$DISABLE_SYSTEM_SLEEP")"
-    echo "COBIEN_OPENWEATHER_CURRENT_URL=$(shell_quote_env_value "$OPENWEATHER_CURRENT_URL")"
-    echo "COBIEN_OPENWEATHER_FORECAST_URL=$(shell_quote_env_value "$OPENWEATHER_FORECAST_URL")"
-    echo "COBIEN_NEWS_API_URL=$(shell_quote_env_value "$NEWS_API_URL")"
-    echo "COBIEN_OPEN_METEO_URL=$(shell_quote_env_value "$OPEN_METEO_URL")"
-    echo "COBIEN_NOMINATIM_SEARCH_URL=$(shell_quote_env_value "$NOMINATIM_SEARCH_URL")"
-    echo "COBIEN_INSTALL_SYSTEMD_USER=$(shell_quote_env_value "$INSTALL_SYSTEMD_USER")"
-    echo "COBIEN_INSTALL_CRON=$(shell_quote_env_value "$INSTALL_CRON")"
-    echo "COBIEN_CRON_SCHEDULE=$(shell_quote_env_value "$CRON_SCHEDULE")"
-    echo "COBIEN_ENABLE_WATCH=$(shell_quote_env_value "$ENABLE_WATCH")"
-    echo "COBIEN_RECREATE_VENV=$(shell_quote_env_value "$RECREATE_VENV")"
-    echo "COBIEN_INSTALL_SYSTEM_DEPS=$(shell_quote_env_value "$INSTALL_SYSTEM_DEPS")"
-    echo "COBIEN_TTS_PIPER_PROVIDER=$(shell_quote_env_value "$TTS_PIPER_PROVIDER")"
-    echo "COBIEN_TTS_PIPER_VERSION=$(shell_quote_env_value "$TTS_PIPER_VERSION")"
-    echo "COBIEN_NON_INTERACTIVE=$(shell_quote_env_value "$NON_INTERACTIVE")"
-    echo "COBIEN_AUTO_CONFIRM=$(shell_quote_env_value "$AUTO_CONFIRM")"
     echo "COBIEN_VENV_ACTIVATE=$(shell_quote_env_value "$VENV_DIR/bin/activate")"
     echo "COBIEN_PYTHON_BIN=$(shell_quote_env_value "$PYTHON_BIN")"
     echo "COBIEN_UV_BIN=$(shell_quote_env_value "$UV_BIN")"
-    echo "COBIEN_BOOTSTRAP_PYTHON_VERSION=$(shell_quote_env_value "$PYTHON_REQUEST")"
     echo "COBIEN_UV_PYTHON=$(shell_quote_env_value "$PYTHON_REQUEST")"
     echo "COBIEN_FRONTEND_APP_DIR=$(shell_quote_env_value "$FRONTEND_APP_DIR")"
     echo "COBIEN_BRIDGE_DIR=$(shell_quote_env_value "$BRIDGE_DIR")"
     echo "COBIEN_CAN_CONFIG=$(shell_quote_env_value "$CAN_CONFIG")"
     if [[ -n "${existing_env[COBIEN_SETTINGS_PIN]:-}" ]]; then
       echo "COBIEN_SETTINGS_PIN=${existing_env[COBIEN_SETTINGS_PIN]}"
-    else
-      if [[ -n "$settings_pin_line" ]]; then
-        echo "$settings_pin_line"
-      fi
+    elif [[ -n "$settings_pin_line" ]]; then
+      echo "$settings_pin_line"
     fi
     if [[ -n "${existing_env[COBIEN_RESTART_PIN]:-}" ]]; then
       echo "COBIEN_RESTART_PIN=${existing_env[COBIEN_RESTART_PIN]}"
-    else
-      if [[ -n "$restart_pin_line" ]]; then
-        echo "$restart_pin_line"
-      fi
+    elif [[ -n "$restart_pin_line" ]]; then
+      echo "$restart_pin_line"
     fi
   } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
   log "Environment file generated: $ENV_FILE"
 }
 
 load_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
+    safe_source_env_file "$ENV_FILE"
   fi
   load_master_env_if_present || true
   normalize_device_identity
@@ -2887,13 +2921,16 @@ run_update_once() {
   local updated=0
   local manual_reload_requested="0"
 
+  acquire_update_lock || return 0
+  trap 'release_update_lock' RETURN
+
   check_paths
   load_env_file
   if is_manual_update_reload_requested; then
     manual_reload_requested="1"
     log "Manual update requested from furniture administration; runtime will be relaunched even if repositories are already up to date."
   fi
-  log_phase_banner "Repository update" "Refreshing cobien_FrontEnd and cobien_MQTT_Dictionnary before continuing with the runtime."
+  log_phase_banner "Repository update" "Refreshing launcher, cobien_FrontEnd and cobien_MQTT_Dictionnary before continuing with the runtime."
   log "Preparing update handoff: ensuring only one launcher/runtime instance remains before updating."
 
   if ! is_running_inside_systemd_user_service && has_active_systemd_user_launcher_service; then
@@ -2903,6 +2940,10 @@ run_update_once() {
   wait_for_no_other_launcher_processes 10 || true
   stop_runtime_processes
   wait_for_runtime_shutdown 20 || true
+
+  # Check the launcher repo first: if cobien-launcher.sh itself changed, handoff_to_updated_launcher
+  # execs the new version, which will then update the remaining repos on its next run.
+  update_repo_if_needed "$LAUNCHER_ROOT" "$handoff_mode" || true
 
   if update_repo_if_needed "$FRONTEND_REPO" "$handoff_mode"; then
     updated=1
@@ -3013,7 +3054,7 @@ EOF
   fi
 
   if crontab -l >/dev/null 2>&1; then
-    crontab -l | grep -v 'cobien-launcher.sh --mode update-once' | crontab - || true
+    crontab -l | grep -v "$SELF_SCRIPT --mode update-once" | crontab - || true
   fi
 
   ln -sfn ../cobien-launcher.service "$graphical_wants_dir/cobien-launcher.service"
@@ -3057,8 +3098,13 @@ verify_systemd_user_services() {
 
   log "Running systemd user verification..."
   systemctl --user daemon-reload
-  systemctl --user enable --now cobien-launcher.service cobien-update.timer
-  systemctl --user restart cobien-launcher.service
+  systemctl --user enable cobien-launcher.service cobien-update.timer >/dev/null 2>&1 || true
+  if is_running_inside_systemd_user_service || systemctl --user is-active --quiet cobien-launcher.service 2>/dev/null; then
+    log "cobien-launcher.service already active; skipping restart"
+  else
+    systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
+  fi
+  systemctl --user start cobien-update.timer >/dev/null 2>&1 || true
 
   if systemctl --user is-active --quiet cobien-launcher.service; then
     log "Verification OK: cobien-launcher.service is active"
@@ -3114,6 +3160,42 @@ print_dry_run() {
   print_runtime_summary
 }
 
+_redact_env_file() {
+  local file="$1" line key
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    if [[ "$key" =~ (API_KEY|TOKEN|PASSWORD|PASSWD|CREDENTIAL|BEARER|_PIN|SECRET|MONGO_URI|NOTIFY_API|VIDEOCALL_DEVICE_API|ADMIN_PASSWORD) ]]; then
+      printf '%s=***\n' "$key"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$file"
+}
+
+_redact_json_file() {
+  local file="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$file" <<'PY'
+import json, sys, re
+SECRET_KEYS = re.compile(r'api_key|token|password|_pin|secret|mongo_uri|notify_api|videocall_device_api', re.I)
+def redact(obj):
+    if isinstance(obj, dict):
+        return {k: "***" if SECRET_KEYS.search(k) else redact(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [redact(i) for i in obj]
+    return obj
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    print(json.dumps(redact(data), indent=4, ensure_ascii=False))
+except Exception as e:
+    print(f"(could not parse: {e})")
+PY
+  else
+    sed -n '1,200p' "$file" 2>/dev/null || true
+  fi
+}
+
 print_diagnostics() {
   # Non-destructive diagnostics to help debug Piper/install/runtime issues
   set_phase "diagnostics"
@@ -3153,8 +3235,8 @@ print_diagnostics() {
   print_file_status "Session env helper" "$LAUNCHER_ROOT/import-systemd-user-env.sh"
 
   if [[ -f "$ENV_FILE" ]]; then
-    log "--- ENV_FILE contents ---"
-    sed -n '1,200p' "$ENV_FILE" 2>/dev/null || true
+    log "--- ENV_FILE contents (secrets redacted) ---"
+    _redact_env_file "$ENV_FILE"
   else
     log "ENV_FILE not found: $ENV_FILE"
   fi
@@ -3162,8 +3244,8 @@ print_diagnostics() {
   local cfg="$FRONTEND_APP_DIR/config/config.local.json"
   log "Unified config: $cfg"
   if [[ -f "$cfg" ]]; then
-    log "--- config.local.json (first 200 lines) ---"
-    sed -n '1,200p' "$cfg" 2>/dev/null || true
+    log "--- config.local.json (secrets redacted) ---"
+    _redact_json_file "$cfg"
   else
     log "config.local.json missing"
   fi
@@ -3200,7 +3282,7 @@ print_diagnostics() {
 
   log "Last run config file: $LAST_RUN_CONFIG_FILE"
   if [[ -f "$LAST_RUN_CONFIG_FILE" ]]; then
-    sed -n '1,200p' "$LAST_RUN_CONFIG_FILE" 2>/dev/null || true
+    _redact_env_file "$LAST_RUN_CONFIG_FILE"
   fi
 
   log_section "Diagnostics end"

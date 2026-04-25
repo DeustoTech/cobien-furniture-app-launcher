@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 if [ "${COBIEN_ALLOW_SYSTEM_PROVISIONING:-}" != "yes" ]; then
     echo "[ERROR] This script is blocked by default to prevent accidental execution on development machines."
@@ -63,6 +64,18 @@ CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
 STEP_TOTAL=10
 ONLINE_ENV_FETCHED=0
+BOOTSTRAP_APT_PACKAGES=(
+    git
+    curl
+    openbox
+    lightdm
+    tint2
+    xterm
+    x11-xserver-utils
+    wmctrl
+    pipewire
+    wireplumber
+)
 
 init_colors() {
     if [[ -t 1 && "${NO_COLOR:-0}" != "1" ]]; then
@@ -203,11 +216,28 @@ print_preflight_snapshot() {
     echo
 }
 
+safe_source_env_file() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    local key value line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        if [[ ${#value} -ge 2 && "$value" == '"'*'"' ]]; then
+            value="${value:1:${#value}-2}"
+            value="${value//\\\"/\"}"
+            value="${value//\\\\/\\}"
+        fi
+        export "$key=$value"
+    done < "$file"
+    return 0
+}
+
 load_selected_env_settings() {
     [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]] || return 0
-    set -a
-    source "$MASTER_ENV_FILE"
-    set +a
+    safe_source_env_file "$MASTER_ENV_FILE"
 
     PROJECT_DIR="${COBIEN_WORKSPACE_ROOT:-$PROJECT_DIR}"
     FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
@@ -479,6 +509,14 @@ print(device_id)
 PY
 }
 
+_curl_config_credentials() {
+    local user="$1" pass="$2"
+    # Escape backslashes then double-quotes per curl config-file syntax.
+    user="${user//\\/\\\\}"; user="${user//\"/\\\"}"
+    pass="${pass//\\/\\\\}"; pass="${pass//\"/\\\"}"
+    printf 'user = "%s:%s"\n' "$user" "$pass"
+}
+
 fetch_online_master_env_file() {
     local should_fetch="${FETCH_CONFIG_ONLINE}"
     local devices_url
@@ -515,7 +553,7 @@ fetch_online_master_env_file() {
     tmp_json="$(mktemp)"
 
     animate "Connecting to the CoBien admin and downloading the furniture list"
-    if ! curl -fsS -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" "$devices_url" -o "$tmp_json"; then
+    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
         rm -f "$tmp_json"
         log WARN "The online furniture list could not be downloaded. Falling back to local env discovery."
         return 0
@@ -560,10 +598,11 @@ PY
 
     device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
     animate "Downloading the complete cobien.env for ${selected_device}"
-    if ! curl -fsS -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" "$device_env_url" -o "$target_env"; then
+    if ! curl -fsS --config - -o "$target_env" "$device_env_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
         log WARN "The online configuration for ${selected_device} could not be downloaded."
         return 0
     fi
+    chmod 600 "$target_env"
 
     MASTER_ENV_FILE="$target_env"
     FETCH_CONFIG_ONLINE="1"
@@ -578,6 +617,35 @@ run_cmd() {
     shift
     animate "$description"
     "$@"
+}
+
+installed_apt_package_version() {
+    local package_name="$1"
+    dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true
+}
+
+install_missing_bootstrap_packages() {
+    local missing_packages=()
+    local package_name
+    local version
+
+    for package_name in "${BOOTSTRAP_APT_PACKAGES[@]}"; do
+        version="$(installed_apt_package_version "$package_name")"
+        if [[ -n "$version" ]]; then
+            print_status_badge OK "Package already installed: ${package_name} (${version})"
+        else
+            missing_packages+=("$package_name")
+        fi
+    done
+
+    if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+        log INFO "All required bootstrap packages are already installed."
+        return 0
+    fi
+
+    log INFO "Missing bootstrap packages: ${missing_packages[*]}"
+    run_cmd "Updating apt metadata" sudo apt update
+    run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
 }
 
 ensure_repo() {
@@ -671,9 +739,33 @@ install_rustdesk() {
         return 0
     fi
 
-    local deb_path="/tmp/rustdesk-${RUSTDESK_VERSION}-x86_64.deb"
+    local installed_version=""
+    installed_version="$(installed_apt_package_version "rustdesk")"
+    if [[ -n "$installed_version" && "$installed_version" == "$RUSTDESK_VERSION"* && -x /usr/bin/rustdesk ]]; then
+        print_status_badge OK "RustDesk ${installed_version} already installed"
+        return 0
+    fi
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    local deb_path="$tmp_dir/rustdesk-${RUSTDESK_VERSION}-x86_64.deb"
     run_cmd "Downloading RustDesk ${RUSTDESK_VERSION}" curl -fL "$RUSTDESK_URL" -o "$deb_path"
+
+    if ! dpkg-deb --info "$deb_path" >/dev/null 2>&1; then
+        log ERROR "Downloaded RustDesk package is not a valid .deb file — aborting install"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    local deb_pkg
+    deb_pkg="$(dpkg-deb --field "$deb_path" Package 2>/dev/null || true)"
+    if [[ "$deb_pkg" != "rustdesk" ]]; then
+        log ERROR "Downloaded .deb Package field is '${deb_pkg}', expected 'rustdesk' — aborting install"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
     run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo apt install -y "$deb_path"
+    rm -rf "$tmp_dir"
 
     if [[ ! -x /usr/bin/rustdesk ]]; then
         log ERROR "RustDesk was not found at /usr/bin/rustdesk after installation."
@@ -835,19 +927,8 @@ main() {
         exit 1
     fi
 
-    phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be installed."
-    run_cmd "Updating apt metadata" sudo apt update
-    run_cmd "Installing required packages" sudo apt install -y \
-        git \
-        curl \
-        openbox \
-        lightdm \
-        tint2 \
-        xterm \
-        x11-xserver-utils \
-        wmctrl \
-        pipewire \
-        wireplumber
+    phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be verified and installed only when missing."
+    install_missing_bootstrap_packages
 
     phase "Preparing workspace" "The furniture repositories will live under the target workspace."
     run_cmd "Creating workspace directory" mkdir -p "$PROJECT_DIR"
