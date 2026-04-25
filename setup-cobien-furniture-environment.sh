@@ -565,29 +565,43 @@ _curl_config_credentials() {
 _download_env_from_portal() {
     local devices_url device_env_url tmp_json selection="" selected_device=""
     local target_env="$SCRIPT_DIR/cobien.env"
+    local max_attempts=4 attempt=0
 
-    # Always re-prompt credentials so the user can switch device/account.
-    ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
-    ADMIN_BASE_URL="$(normalize_admin_base_url "$ADMIN_BASE_URL")"
-    ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
-    ADMIN_PASSWORD="$(prompt_secret "Admin password")"
+    while true; do
+        attempt=$(( attempt + 1 ))
 
-    if [[ -z "$ADMIN_BASE_URL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
-        log WARN "Online configuration skipped: admin URL or credentials are incomplete."
-        return 1
-    fi
+        if [[ "$attempt" -gt 1 ]]; then
+            printf '\n%b[RETRY]%b Login attempt %d of %d\n' \
+                "$COLOR_YELLOW" "$COLOR_RESET" "$attempt" "$max_attempts"
+        fi
 
-    log INFO "Using CoBien admin base URL: ${ADMIN_BASE_URL}"
-    devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
-    tmp_json="$(mktemp)"
+        ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
+        ADMIN_BASE_URL="$(normalize_admin_base_url "$ADMIN_BASE_URL")"
+        ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
+        ADMIN_PASSWORD="$(prompt_secret "Admin password")"
 
-    animate "Downloading the furniture list from the CoBien admin"
-    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" \
-            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+        if [[ -z "$ADMIN_BASE_URL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
+            log WARN "Online configuration skipped: admin URL or credentials are incomplete."
+            return 1
+        fi
+
+        log INFO "Connecting to CoBien admin: ${ADMIN_BASE_URL}"
+        devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
+        tmp_json="$(mktemp)"
+
+        animate "Downloading the furniture list from the CoBien admin"
+        if curl -fsS --config - -o "$tmp_json" "$devices_url" \
+                <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+            break
+        fi
+
         rm -f "$tmp_json"
-        log WARN "Could not reach the CoBien admin or credentials are incorrect."
-        return 1
-    fi
+        if [[ "$attempt" -ge "$max_attempts" ]]; then
+            log WARN "Could not log in after ${max_attempts} attempts. Continuing without online configuration."
+            return 1
+        fi
+        log WARN "Could not reach the CoBien admin or credentials are incorrect. Please try again."
+    done
 
     if [[ -n "$TARGET_DEVICE_ID" ]]; then
         selected_device="$TARGET_DEVICE_ID"
