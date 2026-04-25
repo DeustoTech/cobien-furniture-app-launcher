@@ -3231,6 +3231,42 @@ print_dry_run() {
   print_runtime_summary
 }
 
+_redact_env_file() {
+  local file="$1" line key
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    if [[ "$key" =~ (API_KEY|TOKEN|PASSWORD|_PIN|SECRET|MONGO_URI|NOTIFY_API|VIDEOCALL_DEVICE_API) ]]; then
+      printf '%s=***\n' "$key"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$file"
+}
+
+_redact_json_file() {
+  local file="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$file" <<'PY'
+import json, sys, re
+SECRET_KEYS = re.compile(r'api_key|token|password|_pin|secret|mongo_uri|notify_api|videocall_device_api', re.I)
+def redact(obj):
+    if isinstance(obj, dict):
+        return {k: "***" if SECRET_KEYS.search(k) else redact(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [redact(i) for i in obj]
+    return obj
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    print(json.dumps(redact(data), indent=4, ensure_ascii=False))
+except Exception as e:
+    print(f"(could not parse: {e})")
+PY
+  else
+    sed -n '1,200p' "$file" 2>/dev/null || true
+  fi
+}
+
 print_diagnostics() {
   # Non-destructive diagnostics to help debug Piper/install/runtime issues
   set_phase "diagnostics"
@@ -3270,8 +3306,8 @@ print_diagnostics() {
   print_file_status "Session env helper" "$LAUNCHER_ROOT/import-systemd-user-env.sh"
 
   if [[ -f "$ENV_FILE" ]]; then
-    log "--- ENV_FILE contents ---"
-    sed -n '1,200p' "$ENV_FILE" 2>/dev/null || true
+    log "--- ENV_FILE contents (secrets redacted) ---"
+    _redact_env_file "$ENV_FILE"
   else
     log "ENV_FILE not found: $ENV_FILE"
   fi
@@ -3279,8 +3315,8 @@ print_diagnostics() {
   local cfg="$FRONTEND_APP_DIR/config/config.local.json"
   log "Unified config: $cfg"
   if [[ -f "$cfg" ]]; then
-    log "--- config.local.json (first 200 lines) ---"
-    sed -n '1,200p' "$cfg" 2>/dev/null || true
+    log "--- config.local.json (secrets redacted) ---"
+    _redact_json_file "$cfg"
   else
     log "config.local.json missing"
   fi
@@ -3317,7 +3353,7 @@ print_diagnostics() {
 
   log "Last run config file: $LAST_RUN_CONFIG_FILE"
   if [[ -f "$LAST_RUN_CONFIG_FILE" ]]; then
-    sed -n '1,200p' "$LAST_RUN_CONFIG_FILE" 2>/dev/null || true
+    _redact_env_file "$LAST_RUN_CONFIG_FILE"
   fi
 
   log_section "Diagnostics end"

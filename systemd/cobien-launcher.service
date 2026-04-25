@@ -10,6 +10,8 @@ WorkingDirectory=%h/cobien/cobien-furniture-app-launcher
 ExecStart=/bin/bash %h/cobien/cobien-furniture-app-launcher/cobien-launcher.sh --mode launch --non-interactive --yes --workspace %h/cobien --frontend-name cobien_FrontEnd --mqtt-name cobien_MQTT_Dictionnary --branch master
 Restart=always
 RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
 KillMode=mixed
 TimeoutStopSec=20
 
