@@ -913,8 +913,9 @@ ensure_repo() {
         (
             cd "$repo_dir"
             run_cmd "Fetching ${repo_label}" git fetch origin "$BRANCH_NAME"
-            run_cmd "Checking out ${BRANCH_NAME}" git checkout "$BRANCH_NAME"
-            run_cmd "Pulling latest ${repo_label}" git pull --ff-only origin "$BRANCH_NAME"
+            run_cmd "Checking out ${BRANCH_NAME} from origin/${BRANCH_NAME}" git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
+            run_cmd "Resetting ${repo_label} to origin/${BRANCH_NAME}" git reset --hard "origin/$BRANCH_NAME"
+            run_cmd "Removing untracked non-ignored files from ${repo_label}" git clean -fd
         )
         _verify_repo_sync "$repo_dir" "$repo_label"
         _report_repo_artifacts "$repo_dir" "$repo_label"
