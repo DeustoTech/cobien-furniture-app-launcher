@@ -1573,6 +1573,8 @@ check_paths() {
   set_phase "check-paths"
   resolve_paths
   mkdir -p "$GLOBAL_CONFIG_DIR" "$GLOBAL_STATE_DIR" "$GLOBAL_CACHE_DIR" "$GLOBAL_DATA_DIR" "$CONFIG_DIR" "$LOG_DIR" "$RUNTIME_STATE_DIR" "$CACHE_DIR" "$MODELS_DIR" "$PIPER_RUNTIME_DIR"
+  mkdir -p "$GLOBAL_DATA_DIR/contacts" "$GLOBAL_DATA_DIR/events"
+  mkdir -p "$GLOBAL_CACHE_DIR/weather" "$GLOBAL_CACHE_DIR/board_cache" "$GLOBAL_CACHE_DIR/notifications/cache"
   [[ -d "$FRONTEND_REPO/.git" ]] || { log "Frontend repository not found: $FRONTEND_REPO"; exit 1; }
   [[ -d "$MQTT_REPO/.git" ]] || { log "MQTT repository not found: $MQTT_REPO"; exit 1; }
   [[ -d "$FRONTEND_APP_DIR" ]] || { log "Frontend app directory not found: $FRONTEND_APP_DIR"; exit 1; }
@@ -2742,6 +2744,7 @@ write_env_file() {
     echo "COBIEN_CONFIG_DIR=$(shell_quote_env_value "$CONFIG_DIR")"
     echo "COBIEN_LOCAL_CONFIG_PATH=$(shell_quote_env_value "$LOCAL_CONFIG_PATH")"
     echo "COBIEN_LOG_DIR=$(shell_quote_env_value "$LOG_DIR")"
+    echo "COBIEN_DATA_DIR=$(shell_quote_env_value "$GLOBAL_DATA_DIR")"
     echo "COBIEN_MODELS_DIR=$(shell_quote_env_value "$MODELS_DIR")"
     echo "COBIEN_PIPER_RUNTIME_DIR=$(shell_quote_env_value "$PIPER_RUNTIME_DIR")"
     echo "COBIEN_RUNTIME_STATE_DIR=$(shell_quote_env_value "$RUNTIME_STATE_DIR")"

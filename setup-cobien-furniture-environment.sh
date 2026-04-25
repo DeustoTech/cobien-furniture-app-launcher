@@ -937,10 +937,7 @@ ensure_repo() {
     local repo_url="$2"
     local repo_label="$3"
 
-    if [ ! -d "$repo_dir/.git" ]; then
-        run_cmd "Cloning ${repo_label} into $(basename "$repo_dir")" \
-            git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
-    else
+    if [ -d "$repo_dir/.git" ]; then
         phase "Syncing ${repo_label}" "Refreshing the existing checkout on branch ${BRANCH_NAME}."
         (
             cd "$repo_dir"
@@ -951,6 +948,20 @@ ensure_repo() {
         )
         _verify_repo_sync "$repo_dir" "$repo_label"
         _report_repo_artifacts "$repo_dir" "$repo_label"
+    elif [ -d "$repo_dir" ]; then
+        log WARN "${repo_label}: directory exists at '${repo_dir}' but is not a git repository."
+        log WARN "  This can happen if a previous clone failed or the directory was created manually."
+        if [[ "$AUTO_CONFIRM" == "1" ]] || confirm "Remove '$(basename "$repo_dir")' and reclone from scratch?"; then
+            run_cmd "Removing non-git directory ${repo_dir}" rm -rf "$repo_dir"
+            run_cmd "Cloning ${repo_label} into $(basename "$repo_dir")" \
+                git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
+        else
+            log WARN "${repo_label}: skipping — cannot use a non-git directory."
+            return 1
+        fi
+    else
+        run_cmd "Cloning ${repo_label} into $(basename "$repo_dir")" \
+            git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
     fi
 }
 
