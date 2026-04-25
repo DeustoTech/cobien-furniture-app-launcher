@@ -267,6 +267,26 @@ add_env_candidate() {
     esac
 }
 
+install_master_env_file() {
+    local source_env="$1"
+    local target_env="$SCRIPT_DIR/cobien.env"
+    local source_abs target_abs
+
+    [[ -n "$source_env" && -f "$source_env" ]] || return 1
+
+    source_abs="$(realpath -m "$source_env" 2>/dev/null || printf '%s' "$source_env")"
+    target_abs="$(realpath -m "$target_env" 2>/dev/null || printf '%s' "$target_env")"
+
+    if [[ "$source_abs" != "$target_abs" ]]; then
+        cp "$source_env" "$target_env"
+        chmod 600 "$target_env"
+        log OK "Installed deployment env as canonical file: $target_env"
+    fi
+
+    MASTER_ENV_FILE="$target_env"
+    load_selected_env_settings
+}
+
 discover_env_candidates() {
     ENV_CANDIDATES=()
 
@@ -278,6 +298,7 @@ discover_env_candidates() {
     for pattern in \
         "$PARENT_DIR"/env_for_furnitures/cobien.env.* \
         "$PARENT_DIR"/env_for_furnitures/cobien.env.CoBien* \
+        "$PARENT_DIR"/env_for_furnitures/CoBien*.env \
         "$USER_HOME"/cobien.env \
         "$USER_HOME"/cobien/cobien.env
     do
@@ -289,12 +310,14 @@ choose_master_env_file() {
     fetch_online_master_env_file
 
     if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
+        install_master_env_file "$MASTER_ENV_FILE"
         return 0
     fi
 
     discover_env_candidates
 
     if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
+        install_master_env_file "$MASTER_ENV_FILE"
         return 0
     fi
 
@@ -303,9 +326,8 @@ choose_master_env_file() {
         return 0
     fi
 
-    if [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
-        MASTER_ENV_FILE="${ENV_CANDIDATES[0]}"
-        load_selected_env_settings
+    if [[ "$NON_INTERACTIVE" == "1" ]]; then
+        install_master_env_file "${ENV_CANDIDATES[0]}"
         log INFO "Using deployment env automatically: $MASTER_ENV_FILE"
         return 0
     fi
@@ -338,8 +360,7 @@ choose_master_env_file() {
             continue
         fi
         if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= total )); then
-            MASTER_ENV_FILE="${ENV_CANDIDATES[$((selection - 1))]}"
-            load_selected_env_settings
+            install_master_env_file "${ENV_CANDIDATES[$((selection - 1))]}"
             log OK "Selected deployment env: $MASTER_ENV_FILE"
             return 0
         fi
@@ -554,15 +575,10 @@ _download_env_from_portal() {
 
     if [[ -n "$TARGET_DEVICE_ID" ]]; then
         selected_device="$TARGET_DEVICE_ID"
-    elif [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
-        selected_device="$(python3 - "$tmp_json" <<'PY'
-import json, sys
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-devices = payload.get("devices") or []
-print(str(devices[0].get("device_id") or "").strip() if devices else "")
-PY
-)"
+    elif [[ "$NON_INTERACTIVE" == "1" ]]; then
+        rm -f "$tmp_json"
+        log WARN "Online configuration in non-interactive mode requires COBIEN_TARGET_DEVICE_ID."
+        return 1
     else
         echo
         printf '%b%s%b\n' "$COLOR_BOLD" "Available furniture devices in the CoBien admin" "$COLOR_RESET"
