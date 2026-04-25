@@ -2783,6 +2783,7 @@ is_existing_installation_ready() {
 
 setup_environment() {
   log_phase_banner "Full setup" "Preparing repositories, uv, Python, voice runtime and the generated local config."
+  load_master_env_if_present || true
   check_paths
   install_system_deps_fn
   install_can_sudoers_rule
