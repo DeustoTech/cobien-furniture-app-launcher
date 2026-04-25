@@ -3070,9 +3070,7 @@ install_systemd_user_services() {
   local openbox_autostart_file="$openbox_dir/autostart"
   local openbox_sentinel="# CoBien session env import"
   local timers_wants_dir="$systemd_user_dir/timers.target.wants"
-  local graphical_wants_dir="$systemd_user_dir/graphical-session.target.wants"
-
-  mkdir -p "$systemd_user_dir" "$autostart_dir" "$openbox_dir" "$timers_wants_dir" "$graphical_wants_dir"
+  mkdir -p "$systemd_user_dir" "$autostart_dir" "$openbox_dir" "$timers_wants_dir"
 
   if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger "$USER" >/dev/null 2>&1 || true
@@ -3083,6 +3081,9 @@ install_systemd_user_services() {
   install -m 0644 "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
   install -m 0644 "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
   rm -rf "$systemd_override_dir"
+  # Remove legacy symlink that caused the service to auto-start via graphical-session.target
+  # before DISPLAY was imported, leading to duplicate instances.
+  rm -f "$systemd_user_dir/graphical-session.target.wants/cobien-launcher.service"
 
   cat > "$autostart_file" <<EOF
 [Desktop Entry]
@@ -3111,13 +3112,15 @@ EOF
     crontab -l | grep -v "$SELF_SCRIPT --mode update-once" | crontab - || true
   fi
 
-  ln -sfn ../cobien-launcher.service "$graphical_wants_dir/cobien-launcher.service"
   ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
 
   systemctl --user daemon-reload >/dev/null 2>&1 || true
-  systemctl --user enable --now cobien-launcher.service >/dev/null 2>&1 || true
+  # cobien-launcher.service is NOT linked into any .wants/ dir; import-systemd-user-env.sh
+  # is the sole start trigger so that DISPLAY is always imported before the service starts.
+  systemctl --user enable cobien-launcher.service >/dev/null 2>&1 || true
   systemctl --user enable --now cobien-update.timer >/dev/null 2>&1 || true
-  systemctl --user restart cobien-launcher.service >/dev/null 2>&1 || true
+  systemctl --user reset-failed cobien-launcher.service >/dev/null 2>&1 || true
+  systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
 }
 
 has_systemd_user_launcher_service() {
