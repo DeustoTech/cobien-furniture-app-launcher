@@ -650,6 +650,65 @@ install_missing_bootstrap_packages() {
     run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
 }
 
+_verify_repo_sync() {
+    local repo_dir="$1"
+    local repo_label="$2"
+    local local_sha remote_sha
+    local_sha="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
+    remote_sha="$(git -C "$repo_dir" rev-parse "origin/$BRANCH_NAME" 2>/dev/null || true)"
+    if [[ -z "$local_sha" || -z "$remote_sha" ]]; then
+        log WARN "Could not verify sync state for ${repo_label}."
+        return 0
+    fi
+    if [[ "$local_sha" != "$remote_sha" ]]; then
+        log WARN "${repo_label} HEAD (${local_sha:0:7}) does not match origin/${BRANCH_NAME} (${remote_sha:0:7}) — pull did not complete cleanly."
+        return 1
+    fi
+    print_status_badge OK "${repo_label} is up to date at ${local_sha:0:7}"
+}
+
+_report_repo_artifacts() {
+    local repo_dir="$1"
+    local repo_label="$2"
+    local modified untracked
+
+    # Tracked source files that have been locally modified (manual edits, runtime writes).
+    modified="$(git -C "$repo_dir" diff --name-only HEAD 2>/dev/null || true)"
+    # Untracked files not listed in .gitignore — true unexpected artifacts.
+    untracked="$(git -C "$repo_dir" ls-files --others --exclude-standard 2>/dev/null || true)"
+
+    if [[ -z "$modified" && -z "$untracked" ]]; then
+        print_status_badge OK "No unexpected artifacts in ${repo_label}"
+        return 0
+    fi
+
+    if [[ -n "$modified" ]]; then
+        log WARN "${repo_label}: tracked files with local modifications:"
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            log WARN "    M  $f"
+        done <<< "$modified"
+        log WARN "  These are version-controlled files changed outside of git."
+        log WARN "  To discard: git -C \"$repo_dir\" restore ."
+    fi
+
+    if [[ -n "$untracked" ]]; then
+        local count
+        count="$(printf '%s\n' "$untracked" | grep -c .)"
+        log WARN "${repo_label}: ${count} untracked file(s) not covered by .gitignore:"
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            log WARN "    ?  $f"
+        done <<< "$untracked"
+        if [[ "$AUTO_CONFIRM" == "1" ]] || confirm "Remove these ${count} untracked file(s) from ${repo_label}?"; then
+            git -C "$repo_dir" clean -fd
+            print_status_badge OK "Untracked artifacts removed from ${repo_label}"
+        else
+            log WARN "Untracked artifacts left in place in ${repo_label}."
+        fi
+    fi
+}
+
 ensure_repo() {
     local repo_dir="$1"
     local repo_url="$2"
@@ -664,8 +723,10 @@ ensure_repo() {
             cd "$repo_dir"
             run_cmd "Fetching ${repo_label}" git fetch origin "$BRANCH_NAME"
             run_cmd "Checking out ${BRANCH_NAME}" git checkout "$BRANCH_NAME"
-            run_cmd "Pulling latest ${repo_label}" git pull origin "$BRANCH_NAME"
+            run_cmd "Pulling latest ${repo_label}" git pull --ff-only origin "$BRANCH_NAME"
         )
+        _verify_repo_sync "$repo_dir" "$repo_label"
+        _report_repo_artifacts "$repo_dir" "$repo_label"
     fi
 }
 
