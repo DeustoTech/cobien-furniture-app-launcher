@@ -540,6 +540,31 @@ safe_source_env_file() {
   return 0
 }
 
+expand_path_value() {
+  local value="${1-}"
+  case "$value" in
+    \$HOME) printf '%s\n' "$HOME" ;;
+    \$HOME/*) printf '%s/%s\n' "$HOME" "${value#\$HOME/}" ;;
+    \${HOME}) printf '%s\n' "$HOME" ;;
+    \${HOME}/*) printf '%s/%s\n' "$HOME" "${value#\${HOME}/}" ;;
+    "~") printf '%s\n' "$HOME" ;;
+    "~"/*) printf '%s/%s\n' "$HOME" "${value#~/}" ;;
+    *) printf '%s\n' "$value" ;;
+  esac
+}
+
+normalize_config_paths() {
+  WORKSPACE_ROOT="$(expand_path_value "$WORKSPACE_ROOT")"
+  MASTER_ENV_FILE="$(expand_path_value "$MASTER_ENV_FILE")"
+  TTS_PIPER_BIN="$(expand_path_value "$TTS_PIPER_BIN")"
+  TTS_PIPER_MODEL_ES="$(expand_path_value "$TTS_PIPER_MODEL_ES")"
+  TTS_PIPER_MODEL_FR="$(expand_path_value "$TTS_PIPER_MODEL_FR")"
+  TTS_PIPER_MODEL_ES_MALE="$(expand_path_value "$TTS_PIPER_MODEL_ES_MALE")"
+  TTS_PIPER_MODEL_ES_FEMALE="$(expand_path_value "$TTS_PIPER_MODEL_ES_FEMALE")"
+  TTS_PIPER_MODEL_FR_MALE="$(expand_path_value "$TTS_PIPER_MODEL_FR_MALE")"
+  TTS_PIPER_MODEL_FR_FEMALE="$(expand_path_value "$TTS_PIPER_MODEL_FR_FEMALE")"
+}
+
 # Canonical mapping: COBIEN_* env-var name → local script variable name.
 # Keep both arrays in sync; used by _absorb_cobien_env_vars and _emit_cobien_env_pairs.
 _COBIEN_ENV_KEYS=(
@@ -957,21 +982,22 @@ print_last_run_config_summary() {
 }
 
 resolve_paths() {
+  normalize_config_paths
   FRONTEND_REPO="$WORKSPACE_ROOT/$FRONTEND_REPO_NAME"
   MQTT_REPO="$WORKSPACE_ROOT/$MQTT_REPO_NAME"
   FRONTEND_APP_DIR="$FRONTEND_REPO/app"
   VENV_DIR="$FRONTEND_APP_DIR/.venv"
-  ENV_FILE="${COBIEN_UPDATE_ENV_FILE:-$GLOBAL_CONFIG_DIR/cobien-update.env}"
-  MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-$LAUNCHER_ROOT/cobien.env}"
+  ENV_FILE="$(expand_path_value "${COBIEN_UPDATE_ENV_FILE:-$GLOBAL_CONFIG_DIR/cobien-update.env}")"
+  MASTER_ENV_FILE="$(expand_path_value "${COBIEN_MASTER_ENV_FILE:-$LAUNCHER_ROOT/cobien.env}")"
   BRIDGE_DIR="$MQTT_REPO/Interface_MQTT_CAN_c"
   CAN_CONFIG="$BRIDGE_DIR/conversion.json"
   SELF_SCRIPT="$LAUNCHER_ROOT/cobien-launcher.sh"
   FRONTEND_REPO_ROOT="$FRONTEND_REPO"
-  LOG_DIR="${COBIEN_LOG_DIR:-$GLOBAL_STATE_DIR/logs}"
-  MODELS_DIR="${COBIEN_MODELS_DIR:-$GLOBAL_DATA_DIR/models/piper}"
-  PIPER_RUNTIME_DIR="${COBIEN_PIPER_RUNTIME_DIR:-$GLOBAL_DATA_DIR/piper/runtime}"
-  RUNTIME_STATE_DIR="${COBIEN_RUNTIME_STATE_DIR:-$GLOBAL_STATE_DIR/runtime}"
-  CACHE_DIR="${COBIEN_CACHE_DIR:-$GLOBAL_CACHE_DIR}"
+  LOG_DIR="$(expand_path_value "${COBIEN_LOG_DIR:-$GLOBAL_STATE_DIR/logs}")"
+  MODELS_DIR="$(expand_path_value "${COBIEN_MODELS_DIR:-$GLOBAL_DATA_DIR/models/piper}")"
+  PIPER_RUNTIME_DIR="$(expand_path_value "${COBIEN_PIPER_RUNTIME_DIR:-$GLOBAL_DATA_DIR/piper/runtime}")"
+  RUNTIME_STATE_DIR="$(expand_path_value "${COBIEN_RUNTIME_STATE_DIR:-$GLOBAL_STATE_DIR/runtime}")"
+  CACHE_DIR="$(expand_path_value "${COBIEN_CACHE_DIR:-$GLOBAL_CACHE_DIR}")"
   UPDATE_MARKER_FILE="$RUNTIME_STATE_DIR/system_updated.json"
   LAUNCHER_STOP_REQUEST_FILE="$RUNTIME_STATE_DIR/launcher_stop_requested.flag"
   MANUAL_UPDATE_RELOAD_FILE="$RUNTIME_STATE_DIR/manual_update_reload.flag"
@@ -1873,6 +1899,10 @@ configure_tts_runtime() {
     local model_path="$2"
     local model_url="$3"
     local model_dir model_tmp config_path config_url config_tmp
+    model_path="$(expand_path_value "$model_path")"
+    if [[ "$model_path" != */* ]]; then
+      model_path="$MODELS_DIR/${model_path%.onnx}.onnx"
+    fi
     model_dir="$(dirname "$model_path")"
     config_path="${model_path}.json"
     config_url="${model_url}.json"
@@ -2086,6 +2116,20 @@ configure_tts_runtime() {
   [[ -z "$TTS_PIPER_MODEL_ES_FEMALE" ]] && TTS_PIPER_MODEL_ES_FEMALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_ES_FEMALE}.onnx"
   [[ -z "$TTS_PIPER_MODEL_FR_MALE" ]] && TTS_PIPER_MODEL_FR_MALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_FR_MALE}.onnx"
   [[ -z "$TTS_PIPER_MODEL_FR_FEMALE" ]] && TTS_PIPER_MODEL_FR_FEMALE="$MODELS_DIR/${TTS_PIPER_DEFAULT_MODEL_FR_FEMALE}.onnx"
+
+  local model_var model_value
+  for model_var in \
+    TTS_PIPER_MODEL_ES_MALE \
+    TTS_PIPER_MODEL_ES_FEMALE \
+    TTS_PIPER_MODEL_FR_MALE \
+    TTS_PIPER_MODEL_FR_FEMALE
+  do
+    model_value="$(expand_path_value "${!model_var}")"
+    if [[ "$model_value" != */* ]]; then
+      model_value="$MODELS_DIR/${model_value%.onnx}.onnx"
+    fi
+    declare -g "$model_var=$model_value"
+  done
 
   local ok_models="1"
   install_piper_model "es-male" "$TTS_PIPER_MODEL_ES_MALE" "$TTS_PIPER_MODEL_ES_MALE_URL" || ok_models="0"

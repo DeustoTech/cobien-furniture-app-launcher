@@ -235,11 +235,24 @@ safe_source_env_file() {
     return 0
 }
 
+expand_path_value() {
+    local value="${1-}"
+    case "$value" in
+        \$HOME) printf '%s\n' "$USER_HOME" ;;
+        \$HOME/*) printf '%s/%s\n' "$USER_HOME" "${value#\$HOME/}" ;;
+        \${HOME}) printf '%s\n' "$USER_HOME" ;;
+        \${HOME}/*) printf '%s/%s\n' "$USER_HOME" "${value#\${HOME}/}" ;;
+        "~") printf '%s\n' "$USER_HOME" ;;
+        "~"/*) printf '%s/%s\n' "$USER_HOME" "${value#~/}" ;;
+        *) printf '%s\n' "$value" ;;
+    esac
+}
+
 load_selected_env_settings() {
     [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]] || return 0
     safe_source_env_file "$MASTER_ENV_FILE"
 
-    PROJECT_DIR="${COBIEN_WORKSPACE_ROOT:-$PROJECT_DIR}"
+    PROJECT_DIR="$(expand_path_value "${COBIEN_WORKSPACE_ROOT:-$PROJECT_DIR}")"
     FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
     MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-$MQTT_REPO_NAME}"
     BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-$BRANCH_NAME}"
