@@ -11,11 +11,29 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-TARGET_USER="${SUDO_USER:-$USER}"
+# Resolve the target furniture user account.
+# Priority: explicit override → SUDO_USER (set by sudo) → logname → current user.
+# Never configure root as the furniture user.
+TARGET_USER="${COBIEN_SETUP_USER:-${SUDO_USER:-}}"
+if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
+    TARGET_USER="$(logname 2>/dev/null || true)"
+fi
+if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
+    TARGET_USER="${USER:-}"
+fi
+if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
+    echo "[ERROR] Could not determine the furniture user account (resolved to root or empty)."
+    echo "[ERROR] Run the script as the furniture user via sudo:"
+    echo "[ERROR]   sudo COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $(basename "${BASH_SOURCE[0]}")"
+    echo "[ERROR] Or set the target user explicitly:"
+    echo "[ERROR]   sudo COBIEN_SETUP_USER=cobien COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $(basename "${BASH_SOURCE[0]}")"
+    exit 1
+fi
+
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 
-if [ -z "$TARGET_USER" ] || [ -z "$TARGET_HOME" ]; then
-    echo "[ERROR] Unable to determine the target user and home directory."
+if [ -z "$TARGET_HOME" ]; then
+    echo "[ERROR] User '${TARGET_USER}' does not exist or has no home directory."
     exit 1
 fi
 
