@@ -310,6 +310,9 @@ choose_master_env_file() {
         return 0
     fi
 
+    local total="${#ENV_CANDIDATES[@]}"
+    local download_option=$(( total + 1 ))
+
     echo
     printf '%b%s%b\n' "$COLOR_BOLD" "Detected deployment env candidates" "$COLOR_RESET"
     local i=1
@@ -318,23 +321,23 @@ choose_master_env_file() {
         printf '  %d. %s\n' "$i" "$candidate"
         i=$((i + 1))
     done
-    echo "  d. Download a new configuration from the CoBien admin portal"
+    printf '  %d. Download a new configuration from the CoBien admin portal\n' "$download_option"
     echo "  0. Continue without preselecting a deployment env"
     echo
 
     while true; do
-        printf '%b[SELECT]%b Choose the deployment env to use [0-%d / d]: ' \
-            "$COLOR_YELLOW" "$COLOR_RESET" "${#ENV_CANDIDATES[@]}"
+        printf '%b[SELECT]%b Choose the deployment env to use [0-%d]: ' \
+            "$COLOR_YELLOW" "$COLOR_RESET" "$download_option"
         read -r selection
         if [[ "$selection" == "0" || -z "$selection" ]]; then
             MASTER_ENV_FILE=""
             return 0
         fi
-        if [[ "${selection,,}" == "d" ]]; then
+        if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection == download_option )); then
             _download_env_from_portal && return 0
             continue
         fi
-        if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= ${#ENV_CANDIDATES[@]} )); then
+        if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= total )); then
             MASTER_ENV_FILE="${ENV_CANDIDATES[$((selection - 1))]}"
             load_selected_env_settings
             log OK "Selected deployment env: $MASTER_ENV_FILE"
