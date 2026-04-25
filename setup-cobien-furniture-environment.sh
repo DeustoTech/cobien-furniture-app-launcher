@@ -318,16 +318,21 @@ choose_master_env_file() {
         printf '  %d. %s\n' "$i" "$candidate"
         i=$((i + 1))
     done
+    echo "  d. Download a new configuration from the CoBien admin portal"
     echo "  0. Continue without preselecting a deployment env"
     echo
 
     while true; do
-        printf '%b[SELECT]%b Choose the deployment env to use [0-%d]: ' \
+        printf '%b[SELECT]%b Choose the deployment env to use [0-%d / d]: ' \
             "$COLOR_YELLOW" "$COLOR_RESET" "${#ENV_CANDIDATES[@]}"
         read -r selection
         if [[ "$selection" == "0" || -z "$selection" ]]; then
             MASTER_ENV_FILE=""
             return 0
+        fi
+        if [[ "${selection,,}" == "d" ]]; then
+            _download_env_from_portal && return 0
+            continue
         fi
         if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= ${#ENV_CANDIDATES[@]} )); then
             MASTER_ENV_FILE="${ENV_CANDIDATES[$((selection - 1))]}"
@@ -518,47 +523,32 @@ _curl_config_credentials() {
     printf 'user = "%s:%s"\n' "$user" "$pass"
 }
 
-fetch_online_master_env_file() {
-    local should_fetch="${FETCH_CONFIG_ONLINE}"
-    local devices_url
-    local device_env_url
-    local tmp_json
-    local selection=""
-    local selected_device=""
+_download_env_from_portal() {
+    local devices_url device_env_url tmp_json selection="" selected_device=""
     local target_env="$SCRIPT_DIR/cobien.env"
 
-    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
-        return 0
-    fi
-
-    if [[ "$should_fetch" != "1" ]]; then
-        if ! confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
-            return 0
-        fi
-    fi
-
+    # Always re-prompt credentials so the user can switch device/account.
     ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
     ADMIN_BASE_URL="$(normalize_admin_base_url "$ADMIN_BASE_URL")"
     ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
-    if [[ -z "$ADMIN_PASSWORD" ]]; then
-        ADMIN_PASSWORD="$(prompt_secret "Admin password")"
-    fi
+    ADMIN_PASSWORD="$(prompt_secret "Admin password")"
 
     if [[ -z "$ADMIN_BASE_URL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
-        log WARN "Online configuration skipped because the admin URL or credentials are incomplete."
-        return 0
+        log WARN "Online configuration skipped: admin URL or credentials are incomplete."
+        return 1
     fi
 
-    log INFO "Using CoBien admin base URL: ${ADMIN_BASE_URL}"
+    log INFO "Connecting to CoBien admin: ${ADMIN_BASE_URL}"
 
     devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
     tmp_json="$(mktemp)"
 
-    animate "Connecting to the CoBien admin and downloading the furniture list"
-    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+    animate "Downloading the furniture list from the CoBien admin"
+    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" \
+            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
         rm -f "$tmp_json"
-        log WARN "The online furniture list could not be downloaded. Falling back to local env discovery."
-        return 0
+        log WARN "Could not reach the CoBien admin or credentials are incorrect."
+        return 1
     fi
 
     if [[ -n "$TARGET_DEVICE_ID" ]]; then
@@ -576,14 +566,14 @@ PY
         echo
         printf '%b%s%b\n' "$COLOR_BOLD" "Available furniture devices in the CoBien admin" "$COLOR_RESET"
         render_online_device_choices "$tmp_json"
-        echo "  0. Continue without downloading an online configuration"
+        echo "  0. Cancel"
         echo
         while true; do
             printf '%b[SELECT]%b Choose the furniture to configure [0-n]: ' "$COLOR_YELLOW" "$COLOR_RESET"
             read -r selection
             if [[ "$selection" == "0" || -z "$selection" ]]; then
                 rm -f "$tmp_json"
-                return 0
+                return 1
             fi
             if selected_device="$(device_id_from_selection "$tmp_json" "$selection" 2>/dev/null)"; then
                 break
@@ -594,15 +584,16 @@ PY
     rm -f "$tmp_json"
 
     if [[ -z "$selected_device" ]]; then
-        log WARN "No online furniture device was selected. Falling back to local env discovery."
-        return 0
+        log WARN "No furniture device was selected."
+        return 1
     fi
 
     device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
-    animate "Downloading the complete cobien.env for ${selected_device}"
-    if ! curl -fsS --config - -o "$target_env" "$device_env_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
-        log WARN "The online configuration for ${selected_device} could not be downloaded."
-        return 0
+    animate "Downloading cobien.env for ${selected_device}"
+    if ! curl -fsS --config - -o "$target_env" "$device_env_url" \
+            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+        log WARN "Could not download the configuration for ${selected_device}."
+        return 1
     fi
     chmod 600 "$target_env"
 
@@ -610,8 +601,28 @@ PY
     FETCH_CONFIG_ONLINE="1"
     ONLINE_ENV_FETCHED=1
     load_selected_env_settings
-    log OK "Downloaded the online deployment env for ${selected_device} into ${target_env}"
+    log OK "Downloaded deployment env for ${selected_device} → ${target_env}"
     return 0
+}
+
+fetch_online_master_env_file() {
+    # Skip silently if already resolved or in non-interactive unattended mode.
+    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
+        return 0
+    fi
+
+    if [[ "$FETCH_CONFIG_ONLINE" == "1" ]]; then
+        _download_env_from_portal
+        return
+    fi
+
+    if [[ "$NON_INTERACTIVE" == "1" && "$AUTO_CONFIRM" != "1" ]]; then
+        return 0
+    fi
+
+    if confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
+        _download_env_from_portal || true
+    fi
 }
 
 run_cmd() {
