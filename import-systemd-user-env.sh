@@ -23,8 +23,10 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl --user import-environment "${VARS[@]}" >/dev/null 2>&1 || true
   if systemctl --user is-enabled --quiet cobien-launcher.service 2>/dev/null; then
     if systemctl --user is-active --quiet cobien-launcher.service 2>/dev/null; then
-      printf '[COBIEN] cobien-launcher.service already active; session environment imported without restart\n'
+      printf '[COBIEN] cobien-launcher.service already active; session environment updated\n'
     else
+      # Clear any accumulated failure state from previous boots before starting.
+      systemctl --user reset-failed cobien-launcher.service >/dev/null 2>&1 || true
       printf '[COBIEN] Starting cobien-launcher.service with imported session environment\n'
       systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
     fi
