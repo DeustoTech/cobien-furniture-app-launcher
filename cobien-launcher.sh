@@ -109,6 +109,7 @@ NEWS_API_URL="${COBIEN_NEWS_API_URL:-https://newsapi.org/v2/top-headlines}"
 OPEN_METEO_URL="${COBIEN_OPEN_METEO_URL:-https://api.open-meteo.com/v1/forecast}"
 NOMINATIM_SEARCH_URL="${COBIEN_NOMINATIM_SEARCH_URL:-https://nominatim.openstreetmap.org/search}"
 TTS_PIPER_RELEASE_TAG_DEFAULT="2023.11.14-2"
+UV_INSTALL_VERSION="${COBIEN_UV_INSTALL_VERSION:-0.11.7}"
 [[ -z "$TTS_PIPER_MODEL_ES_MALE_URL" ]] && TTS_PIPER_MODEL_ES_MALE_URL="$TTS_PIPER_DEFAULT_MODEL_ES_MALE_URL"
 [[ -z "$TTS_PIPER_MODEL_ES_FEMALE_URL" ]] && TTS_PIPER_MODEL_ES_FEMALE_URL="$TTS_PIPER_DEFAULT_MODEL_ES_FEMALE_URL"
 [[ -z "$TTS_PIPER_MODEL_FR_MALE_URL" ]] && TTS_PIPER_MODEL_FR_MALE_URL="$TTS_PIPER_DEFAULT_MODEL_FR_MALE_URL"
@@ -1824,6 +1825,10 @@ configure_tts_runtime() {
       log "Failed to download Piper runtime archive."
       return 1
     fi
+    if ! _verify_piper_archive "$archive_path"; then
+      rm -f "$archive_path" || true
+      return 1
+    fi
 
     rm -rf "$runtime_dir/piper" || true
     if ! tar -xzf "$archive_path" -C "$runtime_dir"; then
@@ -1860,6 +1865,10 @@ configure_tts_runtime() {
     log "Attempting system install of Piper from: $asset_url"
     if ! download_file "$asset_url" "$asset_tmp"; then
       log "Failed to download Piper release for system install"
+      rm -rf "$extract_dir" || true
+      return 1
+    fi
+    if ! _verify_piper_archive "$asset_tmp"; then
       rm -rf "$extract_dir" || true
       return 1
     fi
@@ -1904,6 +1913,28 @@ configure_tts_runtime() {
       return $?
     fi
     return 1
+  }
+
+  # Verify a downloaded Piper tar.gz is a valid, non-trivial gzip archive.
+  # Piper binaries are >10 MB; anything smaller is a truncated or bogus download.
+  _verify_piper_archive() {
+    local path="$1"
+    local min_bytes=5242880  # 5 MB
+    if [[ ! -f "$path" ]]; then
+      log "ERROR: Piper archive not found: $path"
+      return 1
+    fi
+    local size
+    size="$(stat -c%s "$path" 2>/dev/null || stat -f%z "$path" 2>/dev/null || echo 0)"
+    if (( size < min_bytes )); then
+      log "ERROR: Piper archive too small (${size} bytes); download may be incomplete or tampered"
+      return 1
+    fi
+    if ! tar -tzf "$path" >/dev/null 2>&1; then
+      log "ERROR: Piper archive is not a valid gzip tarball"
+      return 1
+    fi
+    return 0
   }
 
   install_piper_via_snap() {
@@ -2035,6 +2066,10 @@ configure_tts_runtime() {
         log "Attempting to download Piper binary from: $asset_url"
         if ! download_file "$asset_url" "$asset_tmp"; then
           log "Failed to download Piper release asset: $asset_url"
+          rm -rf "$extract_dir" || true
+          return 1
+        fi
+        if ! _verify_piper_archive "$asset_tmp"; then
           rm -rf "$extract_dir" || true
           return 1
         fi
@@ -2604,6 +2639,71 @@ resolve_python_bin() {
   fi
 }
 
+_install_uv_from_github() {
+  local version="$UV_INSTALL_VERSION"
+  local arch machine
+  machine="$(uname -m)"
+  case "$machine" in
+    x86_64|amd64)   arch="x86_64-unknown-linux-gnu" ;;
+    aarch64|arm64)  arch="aarch64-unknown-linux-gnu" ;;
+    *)
+      log "WARN: Unsupported arch for uv GitHub install: $machine — falling back to Astral install script"
+      curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
+      return $?
+      ;;
+  esac
+
+  local base_url="https://github.com/astral-sh/uv/releases/download/${version}"
+  local archive="uv-${arch}.tar.gz"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local archive_path="$tmp_dir/$archive"
+  local sha256_path="$tmp_dir/${archive}.sha256"
+
+  log "Downloading uv ${version} for ${arch}"
+  if ! curl -fsSL "${base_url}/${archive}" -o "$archive_path"; then
+    log "ERROR: Failed to download uv archive"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! curl -fsSL "${base_url}/${archive}.sha256" -o "$sha256_path"; then
+    log "ERROR: Failed to download uv checksum"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  # sha256sum --check expects "hash  filename" in the same dir
+  local expected_hash actual_hash
+  expected_hash="$(awk '{print $1}' "$sha256_path")"
+  actual_hash="$(sha256sum "$archive_path" | awk '{print $1}')"
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    log "ERROR: uv archive SHA256 mismatch (expected=$expected_hash got=$actual_hash) — aborting install"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  log "uv archive SHA256 verified: $actual_hash"
+
+  if ! tar -xzf "$archive_path" -C "$tmp_dir" >/dev/null 2>&1; then
+    log "ERROR: Failed to extract uv archive"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  local uv_bin
+  uv_bin="$(find "$tmp_dir" -type f -name uv -perm /111 | head -n1)"
+  if [[ -z "$uv_bin" ]]; then
+    log "ERROR: uv binary not found in archive"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  mv -f "$uv_bin" "$HOME/.local/bin/uv"
+  chmod +x "$HOME/.local/bin/uv"
+  rm -rf "$tmp_dir"
+  log "uv ${version} installed at $HOME/.local/bin/uv"
+}
+
 resolve_uv_bin() {
   if [[ -n "$UV_BIN" ]]; then
     return
@@ -2619,15 +2719,13 @@ resolve_uv_bin() {
     return
   fi
 
-  log "Installing uv with the official Astral installer"
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
-
-  if command -v uv >/dev/null 2>&1; then
-    UV_BIN="uv"
-  elif [[ -x "$HOME/.local/bin/uv" ]]; then
+  log "uv not found; installing version ${UV_INSTALL_VERSION} from GitHub releases"
+  if _install_uv_from_github; then
     UV_BIN="$HOME/.local/bin/uv"
+  elif command -v uv >/dev/null 2>&1; then
+    UV_BIN="uv"
   else
-    log "Could not locate uv after installation"
+    log "ERROR: Could not install uv"
     exit 1
   fi
 }

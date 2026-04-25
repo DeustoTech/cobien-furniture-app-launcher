@@ -740,6 +740,20 @@ install_rustdesk() {
 
     local deb_path="/tmp/rustdesk-${RUSTDESK_VERSION}-x86_64.deb"
     run_cmd "Downloading RustDesk ${RUSTDESK_VERSION}" curl -fL "$RUSTDESK_URL" -o "$deb_path"
+
+    if ! dpkg-deb --info "$deb_path" >/dev/null 2>&1; then
+        log ERROR "Downloaded RustDesk package is not a valid .deb file — aborting install"
+        rm -f "$deb_path"
+        return 1
+    fi
+    local deb_pkg
+    deb_pkg="$(dpkg-deb --field "$deb_path" Package 2>/dev/null || true)"
+    if [[ "$deb_pkg" != "rustdesk" ]]; then
+        log ERROR "Downloaded .deb Package field is '${deb_pkg}', expected 'rustdesk' — aborting install"
+        rm -f "$deb_path"
+        return 1
+    fi
+
     run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo apt install -y "$deb_path"
 
     if [[ ! -x /usr/bin/rustdesk ]]; then
