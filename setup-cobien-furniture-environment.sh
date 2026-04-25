@@ -225,7 +225,7 @@ safe_source_env_file() {
         key="${line%%=*}"
         value="${line#*=}"
         [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-        if [[ "$value" == '"'*'"' ]]; then
+        if [[ ${#value} -ge 2 && "$value" == '"'*'"' ]]; then
             value="${value:1:${#value}-2}"
             value="${value//\\\"/\"}"
             value="${value//\\\\/\\}"
