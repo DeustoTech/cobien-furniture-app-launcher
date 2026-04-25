@@ -215,11 +215,28 @@ print_preflight_snapshot() {
     echo
 }
 
+safe_source_env_file() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    local key value line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        if [[ "$value" == '"'*'"' ]]; then
+            value="${value:1:${#value}-2}"
+            value="${value//\\\"/\"}"
+            value="${value//\\\\/\\}"
+        fi
+        export "$key=$value"
+    done < "$file"
+    return 0
+}
+
 load_selected_env_settings() {
     [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]] || return 0
-    set -a
-    source "$MASTER_ENV_FILE"
-    set +a
+    safe_source_env_file "$MASTER_ENV_FILE"
 
     PROJECT_DIR="${COBIEN_WORKSPACE_ROOT:-$PROJECT_DIR}"
     FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
@@ -529,7 +546,7 @@ fetch_online_master_env_file() {
     tmp_json="$(mktemp)"
 
     animate "Connecting to the CoBien admin and downloading the furniture list"
-    if ! curl -fsS -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" "$devices_url" -o "$tmp_json"; then
+    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" <<< "user = \"${ADMIN_USERNAME}:${ADMIN_PASSWORD}\"" 2>/dev/null; then
         rm -f "$tmp_json"
         log WARN "The online furniture list could not be downloaded. Falling back to local env discovery."
         return 0
@@ -574,7 +591,7 @@ PY
 
     device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
     animate "Downloading the complete cobien.env for ${selected_device}"
-    if ! curl -fsS -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" "$device_env_url" -o "$target_env"; then
+    if ! curl -fsS --config - -o "$target_env" "$device_env_url" <<< "user = \"${ADMIN_USERNAME}:${ADMIN_PASSWORD}\"" 2>/dev/null; then
         log WARN "The online configuration for ${selected_device} could not be downloaded."
         return 0
     fi

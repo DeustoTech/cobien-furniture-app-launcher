@@ -515,6 +515,28 @@ run_full_install_plan() {
   fi
 }
 
+# Safe env-file loader: parses KEY=value lines without executing shell code.
+# Accepts double-quoted values (with \" and \\ unescaping); skips blanks and
+# comments. Only keys matching [A-Za-z_][A-Za-z0-9_]* are exported.
+safe_source_env_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  local key value line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ "$value" == '"'*'"' ]]; then
+      value="${value:1:${#value}-2}"
+      value="${value//\\\"/\"}"
+      value="${value//\\\\/\\}"
+    fi
+    export "$key=$value"
+  done < "$file"
+  return 0
+}
+
 read_lock_pid() {
   if [[ -f "$LOCK_PID_FILE" ]]; then
     head -n1 "$LOCK_PID_FILE" 2>/dev/null | tr -dc '0-9'
@@ -828,6 +850,7 @@ COBIEN_NON_INTERACTIVE=$NON_INTERACTIVE
 COBIEN_AUTO_CONFIRM=$AUTO_CONFIRM
 COBIEN_BOOTSTRAP_PYTHON_VERSION=$PYTHON_REQUEST
 EOF
+  chmod 600 "$LAST_RUN_CONFIG_FILE"
   log "Last run configuration saved to: $LAST_RUN_CONFIG_FILE"
 }
 
@@ -835,9 +858,7 @@ load_last_run_config() {
   if [[ ! -f "$LAST_RUN_CONFIG_FILE" ]]; then
     return 1
   fi
-  set -a
-  source "$LAST_RUN_CONFIG_FILE"
-  set +a
+  safe_source_env_file "$LAST_RUN_CONFIG_FILE"
 
   WORKSPACE_ROOT="${COBIEN_WORKSPACE_ROOT:-$WORKSPACE_ROOT}"
   FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
@@ -1032,9 +1053,7 @@ load_master_env_if_present() {
   fi
 
   log "Loading deployment env: $MASTER_ENV_FILE"
-  set -a
-  source "$MASTER_ENV_FILE"
-  set +a
+  safe_source_env_file "$MASTER_ENV_FILE"
 
   WORKSPACE_ROOT="${COBIEN_WORKSPACE_ROOT:-$WORKSPACE_ROOT}"
   FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-$FRONTEND_REPO_NAME}"
@@ -1238,10 +1257,15 @@ runtime_app_command() {
   cat <<EOF
 echo '[APP] Launching frontend with uv'
 cd "$FRONTEND_APP_DIR" || exit
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  source "$ENV_FILE"
-  set +a
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r _line || [[ -n "\$_line" ]]; do
+    [[ -z "\$_line" || "\$_line" == '#'* ]] && continue
+    _key="\${_line%%=*}"
+    _val="\${_line#*=}"
+    [[ "\$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*\$ ]] || continue
+    [[ "\$_val" == '"'*'"' ]] && _val="\${_val:1:\${#_val}-2}"
+    export "\$_key=\$_val"
+  done < "$ENV_FILE"
 fi
 if command -v "$UV_BIN" >/dev/null 2>&1; then
   "$UV_BIN" run --python "$PYTHON_REQUEST" --project "$FRONTEND_APP_DIR" mainApp.py
@@ -2407,6 +2431,8 @@ for section, keys in PRESERVED_LOCAL_CONFIG_KEYS.items():
 
 with open(config_file, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=4, ensure_ascii=False)
+import os, stat
+os.chmod(config_file, stat.S_IRUSR | stat.S_IWUSR)
 PY
 
   log "Device identity synced: language='$APP_LANGUAGE', device_id='$DEVICE_ID', videocall_room='$VIDEOCALL_ROOM', videocall_key='configured', location='$DEVICE_LOCATION', tts_engine='$TTS_ENGINE'"
@@ -2480,6 +2506,8 @@ if not isinstance(settings, dict):
 
 settings["microphone_device"] = os.getenv("COBIEN_MICROPHONE_DEVICE", "")
 config_file.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
+import stat
+config_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 PY
     log "Audio: synced microphone_device in unified config with launcher env"
   fi
@@ -2532,8 +2560,11 @@ ensure_mosquitto_running() {
 
   local mosq_log_dir="${LOG_DIR:-/tmp}"
   local mosq_log_file="$mosq_log_dir/mosquitto-local.log"
+  local mosq_cfg_file="$mosq_log_dir/mosquitto-local.conf"
   mkdir -p "$mosq_log_dir"
-  nohup mosquitto -p 1883 >"$mosq_log_file" 2>&1 &
+  printf 'listener 1883 127.0.0.1\nallow_anonymous true\n' > "$mosq_cfg_file"
+  chmod 600 "$mosq_cfg_file"
+  nohup mosquitto -c "$mosq_cfg_file" >"$mosq_log_file" 2>&1 &
   sleep 1
 
   if pgrep -x mosquitto >/dev/null 2>&1; then
@@ -2544,15 +2575,16 @@ ensure_mosquitto_running() {
 }
 
 install_can_sudoers_rule() {
-  local current_user sudoers_file
+  local current_user sudoers_file can_bitrate
   current_user="$(id -un)"
   sudoers_file="/etc/sudoers.d/cobien-can"
+  can_bitrate="${COBIEN_CAN_BITRATE:-500000}"
 
-  log "Installing passwordless CAN setup rule for user: $current_user"
+  log "Installing passwordless CAN setup rule for user: $current_user (bitrate $can_bitrate)"
   sudo /bin/sh -c "cat > '$sudoers_file' <<EOF
 $current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 down
 $current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 up
-$current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 type can bitrate *
+$current_user ALL=(root) NOPASSWD: /sbin/ip link set can0 type can bitrate $can_bitrate
 EOF"
   sudo chmod 440 "$sudoers_file"
   sudo visudo -cf "$sudoers_file" >/dev/null
@@ -2758,14 +2790,13 @@ write_env_file() {
       fi
     fi
   } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
   log "Environment file generated: $ENV_FILE"
 }
 
 load_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
+    safe_source_env_file "$ENV_FILE"
   fi
   load_master_env_if_present || true
   normalize_device_identity
