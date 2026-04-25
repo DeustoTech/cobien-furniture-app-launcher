@@ -45,8 +45,8 @@ RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:---tray}"
 AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
 CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-ask}"
 
-FRONTEND_REPO="git@github.com:DeustoTech/${FRONTEND_REPO_NAME}.git"
-MQTT_REPO="git@github.com:DeustoTech/${MQTT_REPO_NAME}.git"
+FRONTEND_REPO="https://github.com/DeustoTech/${FRONTEND_REPO_NAME}.git"
+MQTT_REPO="https://github.com/DeustoTech/${MQTT_REPO_NAME}.git"
 
 COLOR_RESET=""
 COLOR_BOLD=""
@@ -269,8 +269,8 @@ load_selected_env_settings() {
     RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:-$RUSTDESK_ARGS}"
     AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-$AUTO_REBOOT_AFTER_SETUP}"
 
-    FRONTEND_REPO="git@github.com:DeustoTech/${FRONTEND_REPO_NAME}.git"
-    MQTT_REPO="git@github.com:DeustoTech/${MQTT_REPO_NAME}.git"
+    FRONTEND_REPO="https://github.com/DeustoTech/${FRONTEND_REPO_NAME}.git"
+    MQTT_REPO="https://github.com/DeustoTech/${MQTT_REPO_NAME}.git"
 }
 
 add_env_candidate() {
