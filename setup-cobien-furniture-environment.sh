@@ -43,6 +43,7 @@ RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-1.4.6}"
 RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
 RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:---tray}"
 AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
+CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-ask}"
 
 FRONTEND_REPO="git@github.com:DeustoTech/${FRONTEND_REPO_NAME}.git"
 MQTT_REPO="git@github.com:DeustoTech/${MQTT_REPO_NAME}.git"
@@ -62,8 +63,10 @@ COLOR_ACCENT=""
 
 CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
-STEP_TOTAL=10
+STEP_TOTAL=11
 ONLINE_ENV_FETCHED=0
+LEGACY_CLEANUP_PATHS=()
+LEGACY_CLEANUP_REASONS=()
 BOOTSTRAP_APT_PACKAGES=(
     git
     curl
@@ -662,6 +665,153 @@ run_cmd() {
     "$@"
 }
 
+legacy_cleanup_mode_enabled() {
+    case "${CLEAN_LEGACY_ARTIFACTS,,}" in
+        1|yes|true|on|force) return 0 ;;
+        0|no|false|off|skip) return 1 ;;
+    esac
+
+    if [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
+        log INFO "Legacy cleanup not forced in unattended mode. Set COBIEN_CLEAN_LEGACY_ARTIFACTS=1 to enable it."
+        return 1
+    fi
+
+    confirm "Search for and remove legacy CoBien launcher/config artifacts before deploying?"
+}
+
+add_legacy_cleanup_candidate() {
+    local path="$1"
+    local reason="$2"
+    [[ -e "$path" || -L "$path" ]] || return 0
+
+    local existing
+    for existing in "${LEGACY_CLEANUP_PATHS[@]:-}"; do
+        [[ "$existing" == "$path" ]] && return 0
+    done
+
+    LEGACY_CLEANUP_PATHS+=("$path")
+    LEGACY_CLEANUP_REASONS+=("$reason")
+}
+
+file_mentions_legacy_frontend_launcher() {
+    local path="$1"
+    [[ -f "$path" ]] || return 1
+    grep -Eq "cobien_FrontEnd/deploy/ubuntu|/deploy/ubuntu/cobien-launcher\.sh|/deploy/ubuntu/import-systemd-user-env\.sh" "$path" 2>/dev/null
+}
+
+path_mentions_legacy_frontend_launcher() {
+    local path="$1"
+    [[ -e "$path" ]] || return 1
+    if [[ -d "$path" ]]; then
+        grep -REq "cobien_FrontEnd/deploy/ubuntu|/deploy/ubuntu/cobien-launcher\.sh|/deploy/ubuntu/import-systemd-user-env\.sh" "$path" 2>/dev/null
+    else
+        file_mentions_legacy_frontend_launcher "$path"
+    fi
+}
+
+collect_legacy_cleanup_candidates() {
+    LEGACY_CLEANUP_PATHS=()
+    LEGACY_CLEANUP_REASONS=()
+
+    local frontend_dir="$PROJECT_DIR/$FRONTEND_REPO_NAME"
+    local frontend_app_dir="$frontend_dir/app"
+    local frontend_deploy_dir="$frontend_dir/deploy/ubuntu"
+    local user_config_dir="$USER_HOME/.config"
+    local systemd_user_dir="$user_config_dir/systemd/user"
+    local autostart_dir="$user_config_dir/autostart"
+    local launcher_state_dir="$user_config_dir/cobien"
+    local service_file
+    local service_name
+
+    add_legacy_cleanup_candidate \
+        "$frontend_app_dir/config/config.local.json" \
+        "legacy per-device config inside the frontend repository"
+    add_legacy_cleanup_candidate \
+        "$frontend_deploy_dir/cobien-update.env" \
+        "legacy generated runtime env inside the frontend repository"
+    add_legacy_cleanup_candidate \
+        "$frontend_deploy_dir/cobien.env" \
+        "legacy deployment env inside the frontend repository"
+    add_legacy_cleanup_candidate \
+        "$launcher_state_dir/launcher-last.env" \
+        "stale launcher last-run state; it will be regenerated from the selected cobien.env"
+    add_legacy_cleanup_candidate \
+        "$launcher_state_dir/cobien-update.env" \
+        "stale generated runtime env; it will be regenerated from the selected cobien.env"
+    add_legacy_cleanup_candidate \
+        "$launcher_state_dir/config.local.json" \
+        "generated local config; it will be regenerated from the selected cobien.env"
+
+    for service_name in cobien-launcher.service cobien-update.service; do
+        service_file="$systemd_user_dir/$service_name"
+        if file_mentions_legacy_frontend_launcher "$service_file"; then
+            add_legacy_cleanup_candidate "$service_file" "legacy systemd unit pointing to the frontend-owned launcher"
+            add_legacy_cleanup_candidate "$systemd_user_dir/graphical-session.target.wants/$service_name" "systemd symlink for a legacy launcher unit"
+            add_legacy_cleanup_candidate "$systemd_user_dir/default.target.wants/$service_name" "systemd symlink for a legacy launcher unit"
+        fi
+    done
+
+    if path_mentions_legacy_frontend_launcher "$systemd_user_dir/cobien-launcher.service.d"; then
+        add_legacy_cleanup_candidate "$systemd_user_dir/cobien-launcher.service.d" "legacy systemd override pointing to the frontend-owned launcher"
+    fi
+
+    service_file="$systemd_user_dir/cobien-update.timer"
+    if [[ -f "$service_file" ]]; then
+        add_legacy_cleanup_candidate "$service_file" "old update timer; it will be reinstalled from cobien-furniture-app-launcher"
+        add_legacy_cleanup_candidate "$systemd_user_dir/timers.target.wants/cobien-update.timer" "systemd symlink for old update timer"
+    fi
+
+    if file_mentions_legacy_frontend_launcher "$autostart_dir/cobien-launcher.desktop"; then
+        add_legacy_cleanup_candidate "$autostart_dir/cobien-launcher.desktop" "legacy desktop autostart launching the frontend-owned launcher"
+    fi
+    if file_mentions_legacy_frontend_launcher "$autostart_dir/cobien-import-session-env.desktop"; then
+        add_legacy_cleanup_candidate "$autostart_dir/cobien-import-session-env.desktop" "legacy desktop autostart importing env from the frontend repository"
+    fi
+}
+
+remove_legacy_cleanup_candidate() {
+    local path="$1"
+    if [[ -d "$path" && ! -L "$path" ]]; then
+        rm -rf -- "$path"
+    else
+        rm -f -- "$path"
+    fi
+}
+
+cleanup_legacy_artifacts() {
+    if ! legacy_cleanup_mode_enabled; then
+        return 0
+    fi
+
+    collect_legacy_cleanup_candidates
+
+    if [[ "${#LEGACY_CLEANUP_PATHS[@]}" -eq 0 ]]; then
+        print_status_badge OK "No legacy launcher/config artifacts detected"
+        return 0
+    fi
+
+    log WARN "Detected ${#LEGACY_CLEANUP_PATHS[@]} legacy/stale CoBien artifact(s):"
+    local i path reason
+    for i in "${!LEGACY_CLEANUP_PATHS[@]}"; do
+        path="${LEGACY_CLEANUP_PATHS[$i]}"
+        reason="${LEGACY_CLEANUP_REASONS[$i]}"
+        log WARN "  - $path"
+        log WARN "    $reason"
+    done
+
+    if [[ "${CLEAN_LEGACY_ARTIFACTS,,}" =~ ^(1|yes|true|on|force)$ ]] || confirm "Remove the detected legacy/stale artifacts now?"; then
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl --user stop cobien-update.timer cobien-update.service cobien-launcher.service >/dev/null 2>&1 || true
+        fi
+        for path in "${LEGACY_CLEANUP_PATHS[@]}"; do
+            remove_legacy_cleanup_candidate "$path"
+        done
+        print_status_badge OK "Legacy/stale artifacts removed"
+    else
+        log WARN "Legacy/stale artifacts left in place by operator choice."
+    fi
+}
+
 installed_apt_package_version() {
     local package_name="$1"
     dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true
@@ -1030,6 +1180,9 @@ main() {
         log ERROR "Preflight checks failed. Fix the missing items and run the setup again."
         exit 1
     fi
+
+    phase "Cleaning legacy CoBien artifacts" "Old frontend-owned launcher files, stale generated config and old user services can be removed before deployment."
+    cleanup_legacy_artifacts
 
     phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be verified and installed only when missing."
     install_missing_bootstrap_packages

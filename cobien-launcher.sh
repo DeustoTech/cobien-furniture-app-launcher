@@ -402,11 +402,11 @@ print_runtime_summary() {
   echo "--------------"
   print_file_status "Deployment env" "${MASTER_ENV_FILE:-unresolved}"
   print_file_status "Runtime env" "${ENV_FILE:-unresolved}"
-  print_file_status "Config dir" "${GLOBAL_CONFIG_DIR:-unresolved}" dir
+  print_file_status "Config dir" "${CONFIG_DIR:-unresolved}" dir
   print_file_status "State dir" "${GLOBAL_STATE_DIR:-unresolved}" dir
   print_file_status "Cache dir" "${GLOBAL_CACHE_DIR:-unresolved}" dir
   print_file_status "Data dir" "${GLOBAL_DATA_DIR:-unresolved}" dir
-  print_file_status "Unified config" "${FRONTEND_APP_DIR:-}/config/config.local.json"
+  print_file_status "Unified config" "${LOCAL_CONFIG_PATH:-unresolved}"
   print_file_status "Version" "${FRONTEND_APP_DIR:-}/VERSION"
   print_file_status "Pyproject" "${FRONTEND_APP_DIR:-}/pyproject.toml"
   print_file_status "Launcher contract" "${FRONTEND_APP_DIR:-}/config_runtime.py"
@@ -989,6 +989,9 @@ resolve_paths() {
   VENV_DIR="$FRONTEND_APP_DIR/.venv"
   ENV_FILE="$(expand_path_value "${COBIEN_UPDATE_ENV_FILE:-$GLOBAL_CONFIG_DIR/cobien-update.env}")"
   MASTER_ENV_FILE="$(expand_path_value "${COBIEN_MASTER_ENV_FILE:-$LAUNCHER_ROOT/cobien.env}")"
+  CONFIG_DIR="$(expand_path_value "${COBIEN_CONFIG_DIR:-$GLOBAL_CONFIG_DIR}")"
+  LOCAL_CONFIG_PATH="$(expand_path_value "${COBIEN_LOCAL_CONFIG_PATH:-$CONFIG_DIR/config.local.json}")"
+  LEGACY_LOCAL_CONFIG_PATH="$FRONTEND_APP_DIR/config/config.local.json"
   BRIDGE_DIR="$MQTT_REPO/Interface_MQTT_CAN_c"
   CAN_CONFIG="$BRIDGE_DIR/conversion.json"
   SELF_SCRIPT="$LAUNCHER_ROOT/cobien-launcher.sh"
@@ -1569,7 +1572,7 @@ python_fallback_apt_pkg() {
 check_paths() {
   set_phase "check-paths"
   resolve_paths
-  mkdir -p "$GLOBAL_CONFIG_DIR" "$GLOBAL_STATE_DIR" "$GLOBAL_CACHE_DIR" "$GLOBAL_DATA_DIR" "$LOG_DIR" "$RUNTIME_STATE_DIR" "$CACHE_DIR" "$MODELS_DIR" "$PIPER_RUNTIME_DIR"
+  mkdir -p "$GLOBAL_CONFIG_DIR" "$GLOBAL_STATE_DIR" "$GLOBAL_CACHE_DIR" "$GLOBAL_DATA_DIR" "$CONFIG_DIR" "$LOG_DIR" "$RUNTIME_STATE_DIR" "$CACHE_DIR" "$MODELS_DIR" "$PIPER_RUNTIME_DIR"
   [[ -d "$FRONTEND_REPO/.git" ]] || { log "Frontend repository not found: $FRONTEND_REPO"; exit 1; }
   [[ -d "$MQTT_REPO/.git" ]] || { log "MQTT repository not found: $MQTT_REPO"; exit 1; }
   [[ -d "$FRONTEND_APP_DIR" ]] || { log "Frontend app directory not found: $FRONTEND_APP_DIR"; exit 1; }
@@ -2171,7 +2174,7 @@ configure_tts_runtime() {
 
 ensure_device_identity_config() {
   local unified_config_file
-  unified_config_file="$FRONTEND_APP_DIR/config/config.local.json"
+  unified_config_file="$LOCAL_CONFIG_PATH"
   mkdir -p "$(dirname "$unified_config_file")"
 
   if ! command -v python3 >/dev/null 2>&1; then
@@ -2179,6 +2182,8 @@ ensure_device_identity_config() {
     return
   fi
 
+  COBIEN_CONFIG_DIR="$CONFIG_DIR" \
+  COBIEN_LOCAL_CONFIG_PATH="$LOCAL_CONFIG_PATH" \
   COBIEN_APP_LANGUAGE="$APP_LANGUAGE" \
   COBIEN_DEVICE_ID="$DEVICE_ID" \
   COBIEN_VIDEOCALL_ROOM="$VIDEOCALL_ROOM" \
@@ -2242,13 +2247,13 @@ ensure_device_identity_config() {
   COBIEN_NEWS_API_URL="$NEWS_API_URL" \
   COBIEN_OPEN_METEO_URL="$OPEN_METEO_URL" \
   COBIEN_NOMINATIM_SEARCH_URL="$NOMINATIM_SEARCH_URL" \
-  python3 - "$unified_config_file" "$FRONTEND_APP_DIR/VERSION" <<'PY'
+python3 - "$unified_config_file" "$FRONTEND_APP_DIR/VERSION" "$LEGACY_LOCAL_CONFIG_PATH" <<'PY'
 import json
 import os
 import sys
 
-config_file, version_file = sys.argv[1:3]
-app_dir = os.path.dirname(os.path.dirname(config_file))
+config_file, version_file, legacy_config_file = sys.argv[1:4]
+app_dir = os.path.dirname(version_file)
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
 
@@ -2317,6 +2322,8 @@ except Exception:
     software_version = ""
 
 existing_data = load_existing_config(config_file)
+if not existing_data and os.path.abspath(legacy_config_file) != os.path.abspath(config_file):
+    existing_data = load_existing_config(legacy_config_file)
 
 data = {
     "meta": {
@@ -2414,7 +2421,7 @@ PY
 
 configure_audio_input_defaults() {
   local unified_config_file
-  unified_config_file="$FRONTEND_APP_DIR/config/config.local.json"
+  unified_config_file="$LOCAL_CONFIG_PATH"
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user restart pipewire pipewire-pulse wireplumber >/dev/null 2>&1 || true
@@ -2732,6 +2739,8 @@ write_env_file() {
     echo "COBIEN_FRONTEND_REPO=$(shell_quote_env_value "$FRONTEND_REPO")"
     echo "COBIEN_MQTT_REPO=$(shell_quote_env_value "$MQTT_REPO")"
     echo "COBIEN_UPDATE_ENV_FILE=$(shell_quote_env_value "$ENV_FILE")"
+    echo "COBIEN_CONFIG_DIR=$(shell_quote_env_value "$CONFIG_DIR")"
+    echo "COBIEN_LOCAL_CONFIG_PATH=$(shell_quote_env_value "$LOCAL_CONFIG_PATH")"
     echo "COBIEN_LOG_DIR=$(shell_quote_env_value "$LOG_DIR")"
     echo "COBIEN_MODELS_DIR=$(shell_quote_env_value "$MODELS_DIR")"
     echo "COBIEN_PIPER_RUNTIME_DIR=$(shell_quote_env_value "$PIPER_RUNTIME_DIR")"
@@ -2783,6 +2792,7 @@ is_existing_installation_ready() {
 
 setup_environment() {
   log_phase_banner "Full setup" "Preparing repositories, uv, Python, voice runtime and the generated local config."
+  load_master_env_if_present || true
   check_paths
   install_system_deps_fn
   install_can_sudoers_rule
@@ -3263,13 +3273,13 @@ print_diagnostics() {
   log "--- critical file dependency status ---"
   print_file_status "Deployment env" "${MASTER_ENV_FILE:-unresolved}"
   print_file_status "Runtime env" "${ENV_FILE:-unresolved}"
-  print_file_status "Config dir" "$GLOBAL_CONFIG_DIR" dir
+  print_file_status "Config dir" "$CONFIG_DIR" dir
   print_file_status "State dir" "$GLOBAL_STATE_DIR" dir
   print_file_status "Cache dir" "$GLOBAL_CACHE_DIR" dir
   print_file_status "Data dir" "$GLOBAL_DATA_DIR" dir
   print_file_status "Models dir" "$MODELS_DIR" dir
   print_file_status "Piper runtime dir" "$PIPER_RUNTIME_DIR" dir
-  print_file_status "Unified config" "$FRONTEND_APP_DIR/config/config.local.json"
+  print_file_status "Unified config" "$LOCAL_CONFIG_PATH"
   print_file_status "Default config" "$FRONTEND_APP_DIR/config/config.default.json"
   print_file_status "Launcher contract" "$FRONTEND_APP_DIR/config_runtime.py"
   print_file_status "Main app" "$FRONTEND_APP_DIR/mainApp.py"
@@ -3285,7 +3295,7 @@ print_diagnostics() {
     log "ENV_FILE not found: $ENV_FILE"
   fi
 
-  local cfg="$FRONTEND_APP_DIR/config/config.local.json"
+  local cfg="$LOCAL_CONFIG_PATH"
   log "Unified config: $cfg"
   if [[ -f "$cfg" ]]; then
     log "--- config.local.json (secrets redacted) ---"
