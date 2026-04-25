@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHER_ROOT_DEFAULT="$SCRIPT_DIR"
@@ -1264,7 +1265,11 @@ if [[ -f "$ENV_FILE" ]]; then
     _key="\${_line%%=*}"
     _val="\${_line#*=}"
     [[ "\$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*\$ ]] || continue
-    [[ "\$_val" == '"'*'"' ]] && _val="\${_val:1:\${#_val}-2}"
+    if [[ "\$_val" == '"'*'"' ]]; then
+      _val="\${_val:1:\${#_val}-2}"
+      _val="\${_val//\\\\\"/\"}"
+      _val="\${_val//\\\\\\\\/\\\\}"
+    fi
     export "\$_key=\$_val"
   done < "$ENV_FILE"
 fi
@@ -1280,19 +1285,6 @@ fi
 EOF
 }
 
-runtime_can_open_terminals() {
-  [[ -n "${DISPLAY:-}" ]] && command -v gnome-terminal >/dev/null 2>&1
-}
-
-runtime_launch_named_terminal() {
-  local title="$1"
-  local command_text="$2"
-  if runtime_can_open_terminals; then
-    gnome-terminal --title="$title" -- bash -lc "$command_text" || return 1
-    return 0
-  fi
-  return 1
-}
 
 runtime_launch_background() {
   local name="$1"
@@ -1437,11 +1429,7 @@ launch_runtime() {
   log "PATHS: UV_BIN=$UV_BIN"
   log "PATHS: FRONTEND_APP_DIR=$FRONTEND_APP_DIR"
   log "PATHS: LOG_DIR=$LOG_DIR"
-  if runtime_can_open_terminals; then
-    log "TERM: gnome-terminal available on DISPLAY=${DISPLAY:-}"
-  else
-    log "WARN: TERM: No graphical terminal available, using fallback mode"
-  fi
+  log "TERM: Using background launch mode (runtime_launch_background)"
 
   if [[ "$relaunch_after_update" == "1" ]]; then
     log "CLEAN: Update relaunch detected."
@@ -1488,7 +1476,7 @@ run_passive_supervision_loop() {
   log "Passive supervision enabled; update checks are delegated to external triggers."
   while true; do
     ensure_runtime_supervision
-    sleep 2
+    sleep $(( 8 + RANDOM % 5 ))
   done
 }
 
@@ -2594,12 +2582,14 @@ ensure_mosquitto_running() {
   fi
 
   local mosq_log_dir="${LOG_DIR:-/tmp}"
+  local mosq_state_dir="${RUNTIME_STATE_DIR:-${mosq_log_dir}}"
   local mosq_log_file="$mosq_log_dir/mosquitto-local.log"
-  local mosq_cfg_file="$mosq_log_dir/mosquitto-local.conf"
-  mkdir -p "$mosq_log_dir"
+  local mosq_cfg_file="$mosq_state_dir/mosquitto-local.conf"
+  mkdir -p "$mosq_log_dir" "$mosq_state_dir"
   printf 'listener 1883 127.0.0.1\nallow_anonymous true\n' > "$mosq_cfg_file"
   chmod 600 "$mosq_cfg_file"
-  nohup mosquitto -c "$mosq_cfg_file" >"$mosq_log_file" 2>&1 &
+  ( nohup mosquitto -c "$mosq_cfg_file" >"$mosq_log_file" 2>&1 ) &
+  disown $!
   sleep 1
 
   if pgrep -x mosquitto >/dev/null 2>&1; then
@@ -2647,9 +2637,9 @@ _install_uv_from_github() {
     x86_64|amd64)   arch="x86_64-unknown-linux-gnu" ;;
     aarch64|arm64)  arch="aarch64-unknown-linux-gnu" ;;
     *)
-      log "WARN: Unsupported arch for uv GitHub install: $machine — falling back to Astral install script"
-      curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
-      return $?
+      log "ERROR: Unsupported architecture for uv installation: $machine"
+      log "ERROR: Install uv manually from https://github.com/astral-sh/uv/releases and set COBIEN_BOOTSTRAP_UV_BIN"
+      return 1
       ;;
   esac
 
@@ -3272,8 +3262,13 @@ verify_systemd_user_services() {
 
   log "Running systemd user verification..."
   systemctl --user daemon-reload
-  systemctl --user enable --now cobien-launcher.service cobien-update.timer
-  systemctl --user restart cobien-launcher.service
+  systemctl --user enable cobien-launcher.service cobien-update.timer >/dev/null 2>&1 || true
+  if is_running_inside_systemd_user_service || systemctl --user is-active --quiet cobien-launcher.service 2>/dev/null; then
+    log "cobien-launcher.service already active; skipping restart"
+  else
+    systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
+  fi
+  systemctl --user start cobien-update.timer >/dev/null 2>&1 || true
 
   if systemctl --user is-active --quiet cobien-launcher.service; then
     log "Verification OK: cobien-launcher.service is active"
@@ -3333,7 +3328,7 @@ _redact_env_file() {
   local file="$1" line key
   while IFS= read -r line || [[ -n "$line" ]]; do
     key="${line%%=*}"
-    if [[ "$key" =~ (API_KEY|TOKEN|PASSWORD|_PIN|SECRET|MONGO_URI|NOTIFY_API|VIDEOCALL_DEVICE_API) ]]; then
+    if [[ "$key" =~ (API_KEY|TOKEN|PASSWORD|PASSWD|CREDENTIAL|BEARER|_PIN|SECRET|MONGO_URI|NOTIFY_API|VIDEOCALL_DEVICE_API|ADMIN_PASSWORD) ]]; then
       printf '%s=***\n' "$key"
     else
       printf '%s\n' "$line"

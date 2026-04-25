@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 if [ "${COBIEN_ALLOW_SYSTEM_PROVISIONING:-}" != "yes" ]; then
     echo "[ERROR] This script is blocked by default to prevent accidental execution on development machines."
@@ -509,6 +510,14 @@ print(device_id)
 PY
 }
 
+_curl_config_credentials() {
+    local user="$1" pass="$2"
+    # Escape backslashes then double-quotes per curl config-file syntax.
+    user="${user//\\/\\\\}"; user="${user//\"/\\\"}"
+    pass="${pass//\\/\\\\}"; pass="${pass//\"/\\\"}"
+    printf 'user = "%s:%s"\n' "$user" "$pass"
+}
+
 fetch_online_master_env_file() {
     local should_fetch="${FETCH_CONFIG_ONLINE}"
     local devices_url
@@ -546,7 +555,7 @@ fetch_online_master_env_file() {
     tmp_json="$(mktemp)"
 
     animate "Connecting to the CoBien admin and downloading the furniture list"
-    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" <<< "user = \"${ADMIN_USERNAME}:${ADMIN_PASSWORD}\"" 2>/dev/null; then
+    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
         rm -f "$tmp_json"
         log WARN "The online furniture list could not be downloaded. Falling back to local env discovery."
         return 0
@@ -591,10 +600,11 @@ PY
 
     device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
     animate "Downloading the complete cobien.env for ${selected_device}"
-    if ! curl -fsS --config - -o "$target_env" "$device_env_url" <<< "user = \"${ADMIN_USERNAME}:${ADMIN_PASSWORD}\"" 2>/dev/null; then
+    if ! curl -fsS --config - -o "$target_env" "$device_env_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
         log WARN "The online configuration for ${selected_device} could not be downloaded."
         return 0
     fi
+    chmod 600 "$target_env"
 
     MASTER_ENV_FILE="$target_env"
     FETCH_CONFIG_ONLINE="1"
@@ -738,23 +748,26 @@ install_rustdesk() {
         return 0
     fi
 
-    local deb_path="/tmp/rustdesk-${RUSTDESK_VERSION}-x86_64.deb"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    local deb_path="$tmp_dir/rustdesk-${RUSTDESK_VERSION}-x86_64.deb"
     run_cmd "Downloading RustDesk ${RUSTDESK_VERSION}" curl -fL "$RUSTDESK_URL" -o "$deb_path"
 
     if ! dpkg-deb --info "$deb_path" >/dev/null 2>&1; then
         log ERROR "Downloaded RustDesk package is not a valid .deb file — aborting install"
-        rm -f "$deb_path"
+        rm -rf "$tmp_dir"
         return 1
     fi
     local deb_pkg
     deb_pkg="$(dpkg-deb --field "$deb_path" Package 2>/dev/null || true)"
     if [[ "$deb_pkg" != "rustdesk" ]]; then
         log ERROR "Downloaded .deb Package field is '${deb_pkg}', expected 'rustdesk' — aborting install"
-        rm -f "$deb_path"
+        rm -rf "$tmp_dir"
         return 1
     fi
 
     run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo apt install -y "$deb_path"
+    rm -rf "$tmp_dir"
 
     if [[ ! -x /usr/bin/rustdesk ]]; then
         log ERROR "RustDesk was not found at /usr/bin/rustdesk after installation."
