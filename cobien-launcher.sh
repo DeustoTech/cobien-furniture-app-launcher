@@ -617,7 +617,7 @@ _absorb_cobien_env_vars() {
   for i in "${!_COBIEN_ENV_KEYS[@]}"; do
     env_key="${_COBIEN_ENV_KEYS[$i]}"
     [[ -n "${_skip[$env_key]+x}" ]] && continue
-    env_val="${!env_key}"
+    env_val="${!env_key:-}"
     [[ -n "$env_val" ]] || continue
     local_var="${_COBIEN_LOCAL_VARS[$i]}"
     declare -g "$local_var=$env_val"
@@ -631,7 +631,7 @@ _emit_cobien_env_pairs() {
   for i in "${!_COBIEN_ENV_KEYS[@]}"; do
     env_key="${_COBIEN_ENV_KEYS[$i]}"
     local_var="${_COBIEN_LOCAL_VARS[$i]}"
-    printf '%s=%s\n' "$env_key" "${!local_var}"
+    printf '%s=%s\n' "$env_key" "${!local_var:-}"
   done
 }
 
@@ -2682,7 +2682,7 @@ write_env_file() {
     for i in "${!_COBIEN_ENV_KEYS[@]}"; do
       env_key="${_COBIEN_ENV_KEYS[$i]}"
       local_var="${_COBIEN_LOCAL_VARS[$i]}"
-      printf '%s=%s\n' "$env_key" "$(shell_quote_env_value "${!local_var}")"
+      printf '%s=%s\n' "$env_key" "$(shell_quote_env_value "${!local_var:-}")"
     done
     # Path/derived variables not in the mapping.
     echo "COBIEN_FRONTEND_REPO=$(shell_quote_env_value "$FRONTEND_REPO")"

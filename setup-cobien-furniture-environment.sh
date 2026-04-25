@@ -310,6 +310,9 @@ choose_master_env_file() {
         return 0
     fi
 
+    local total="${#ENV_CANDIDATES[@]}"
+    local download_option=$(( total + 1 ))
+
     echo
     printf '%b%s%b\n' "$COLOR_BOLD" "Detected deployment env candidates" "$COLOR_RESET"
     local i=1
@@ -318,18 +321,23 @@ choose_master_env_file() {
         printf '  %d. %s\n' "$i" "$candidate"
         i=$((i + 1))
     done
+    printf '  %d. Download a new configuration from the CoBien admin portal\n' "$download_option"
     echo "  0. Continue without preselecting a deployment env"
     echo
 
     while true; do
         printf '%b[SELECT]%b Choose the deployment env to use [0-%d]: ' \
-            "$COLOR_YELLOW" "$COLOR_RESET" "${#ENV_CANDIDATES[@]}"
+            "$COLOR_YELLOW" "$COLOR_RESET" "$download_option"
         read -r selection
         if [[ "$selection" == "0" || -z "$selection" ]]; then
             MASTER_ENV_FILE=""
             return 0
         fi
-        if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= ${#ENV_CANDIDATES[@]} )); then
+        if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection == download_option )); then
+            _download_env_from_portal && return 0
+            continue
+        fi
+        if [[ "$selection" =~ ^[0-9]+$ ]] && (( selection >= 1 && selection <= total )); then
             MASTER_ENV_FILE="${ENV_CANDIDATES[$((selection - 1))]}"
             load_selected_env_settings
             log OK "Selected deployment env: $MASTER_ENV_FILE"
@@ -517,46 +525,31 @@ _curl_config_credentials() {
     printf 'user = "%s:%s"\n' "$user" "$pass"
 }
 
-fetch_online_master_env_file() {
-    local should_fetch="${FETCH_CONFIG_ONLINE}"
-    local devices_url
-    local device_env_url
-    local tmp_json
-    local selection=""
-    local selected_device=""
+_download_env_from_portal() {
+    local devices_url device_env_url tmp_json selection="" selected_device=""
     local target_env="$SCRIPT_DIR/cobien.env"
 
-    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
-        return 0
-    fi
-
-    if [[ "$should_fetch" != "1" ]]; then
-        if ! confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
-            return 0
-        fi
-    fi
-
+    # Always re-prompt credentials so the user can switch device/account.
     ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
     ADMIN_BASE_URL="$(normalize_admin_base_url "$ADMIN_BASE_URL")"
     ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
-    if [[ -z "$ADMIN_PASSWORD" ]]; then
-        ADMIN_PASSWORD="$(prompt_secret "Admin password")"
-    fi
+    ADMIN_PASSWORD="$(prompt_secret "Admin password")"
 
     if [[ -z "$ADMIN_BASE_URL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
-        log WARN "Online configuration skipped because the admin URL or credentials are incomplete."
-        return 0
+        log WARN "Online configuration skipped: admin URL or credentials are incomplete."
+        return 1
     fi
 
     log INFO "Using CoBien admin base URL: ${ADMIN_BASE_URL}"
     devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
     tmp_json="$(mktemp)"
 
-    animate "Connecting to the CoBien admin and downloading the furniture list"
-    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+    animate "Downloading the furniture list from the CoBien admin"
+    if ! curl -fsS --config - -o "$tmp_json" "$devices_url" \
+            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
         rm -f "$tmp_json"
-        log WARN "The online furniture list could not be downloaded. Falling back to local env discovery."
-        return 0
+        log WARN "Could not reach the CoBien admin or credentials are incorrect."
+        return 1
     fi
 
     if [[ -n "$TARGET_DEVICE_ID" ]]; then
@@ -574,14 +567,14 @@ PY
         echo
         printf '%b%s%b\n' "$COLOR_BOLD" "Available furniture devices in the CoBien admin" "$COLOR_RESET"
         render_online_device_choices "$tmp_json"
-        echo "  0. Continue without downloading an online configuration"
+        echo "  0. Cancel"
         echo
         while true; do
             printf '%b[SELECT]%b Choose the furniture to configure [0-n]: ' "$COLOR_YELLOW" "$COLOR_RESET"
             read -r selection
             if [[ "$selection" == "0" || -z "$selection" ]]; then
                 rm -f "$tmp_json"
-                return 0
+                return 1
             fi
             if selected_device="$(device_id_from_selection "$tmp_json" "$selection" 2>/dev/null)"; then
                 break
@@ -592,15 +585,16 @@ PY
     rm -f "$tmp_json"
 
     if [[ -z "$selected_device" ]]; then
-        log WARN "No online furniture device was selected. Falling back to local env discovery."
-        return 0
+        log WARN "No furniture device was selected."
+        return 1
     fi
 
     device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
-    animate "Downloading the complete cobien.env for ${selected_device}"
-    if ! curl -fsS --config - -o "$target_env" "$device_env_url" <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
-        log WARN "The online configuration for ${selected_device} could not be downloaded."
-        return 0
+    animate "Downloading cobien.env for ${selected_device}"
+    if ! curl -fsS --config - -o "$target_env" "$device_env_url" \
+            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+        log WARN "Could not download the configuration for ${selected_device}."
+        return 1
     fi
     chmod 600 "$target_env"
 
@@ -608,8 +602,28 @@ PY
     FETCH_CONFIG_ONLINE="1"
     ONLINE_ENV_FETCHED=1
     load_selected_env_settings
-    log OK "Downloaded the online deployment env for ${selected_device} into ${target_env}"
+    log OK "Downloaded deployment env for ${selected_device} → ${target_env}"
     return 0
+}
+
+fetch_online_master_env_file() {
+    # Skip silently if already resolved or in non-interactive unattended mode.
+    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
+        return 0
+    fi
+
+    if [[ "$FETCH_CONFIG_ONLINE" == "1" ]]; then
+        _download_env_from_portal
+        return
+    fi
+
+    if [[ "$NON_INTERACTIVE" == "1" && "$AUTO_CONFIRM" != "1" ]]; then
+        return 0
+    fi
+
+    if confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
+        _download_env_from_portal || true
+    fi
 }
 
 run_cmd() {
@@ -648,6 +662,65 @@ install_missing_bootstrap_packages() {
     run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
 }
 
+_verify_repo_sync() {
+    local repo_dir="$1"
+    local repo_label="$2"
+    local local_sha remote_sha
+    local_sha="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
+    remote_sha="$(git -C "$repo_dir" rev-parse "origin/$BRANCH_NAME" 2>/dev/null || true)"
+    if [[ -z "$local_sha" || -z "$remote_sha" ]]; then
+        log WARN "Could not verify sync state for ${repo_label}."
+        return 0
+    fi
+    if [[ "$local_sha" != "$remote_sha" ]]; then
+        log WARN "${repo_label} HEAD (${local_sha:0:7}) does not match origin/${BRANCH_NAME} (${remote_sha:0:7}) — pull did not complete cleanly."
+        return 1
+    fi
+    print_status_badge OK "${repo_label} is up to date at ${local_sha:0:7}"
+}
+
+_report_repo_artifacts() {
+    local repo_dir="$1"
+    local repo_label="$2"
+    local modified untracked
+
+    # Tracked source files that have been locally modified (manual edits, runtime writes).
+    modified="$(git -C "$repo_dir" diff --name-only HEAD 2>/dev/null || true)"
+    # Untracked files not listed in .gitignore — true unexpected artifacts.
+    untracked="$(git -C "$repo_dir" ls-files --others --exclude-standard 2>/dev/null || true)"
+
+    if [[ -z "$modified" && -z "$untracked" ]]; then
+        print_status_badge OK "No unexpected artifacts in ${repo_label}"
+        return 0
+    fi
+
+    if [[ -n "$modified" ]]; then
+        log WARN "${repo_label}: tracked files with local modifications:"
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            log WARN "    M  $f"
+        done <<< "$modified"
+        log WARN "  These are version-controlled files changed outside of git."
+        log WARN "  To discard: git -C \"$repo_dir\" restore ."
+    fi
+
+    if [[ -n "$untracked" ]]; then
+        local count
+        count="$(printf '%s\n' "$untracked" | grep -c .)"
+        log WARN "${repo_label}: ${count} untracked file(s) not covered by .gitignore:"
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            log WARN "    ?  $f"
+        done <<< "$untracked"
+        if [[ "$AUTO_CONFIRM" == "1" ]] || confirm "Remove these ${count} untracked file(s) from ${repo_label}?"; then
+            git -C "$repo_dir" clean -fd
+            print_status_badge OK "Untracked artifacts removed from ${repo_label}"
+        else
+            log WARN "Untracked artifacts left in place in ${repo_label}."
+        fi
+    fi
+}
+
 ensure_repo() {
     local repo_dir="$1"
     local repo_url="$2"
@@ -662,8 +735,10 @@ ensure_repo() {
             cd "$repo_dir"
             run_cmd "Fetching ${repo_label}" git fetch origin "$BRANCH_NAME"
             run_cmd "Checking out ${BRANCH_NAME}" git checkout "$BRANCH_NAME"
-            run_cmd "Pulling latest ${repo_label}" git pull origin "$BRANCH_NAME"
+            run_cmd "Pulling latest ${repo_label}" git pull --ff-only origin "$BRANCH_NAME"
         )
+        _verify_repo_sync "$repo_dir" "$repo_label"
+        _report_repo_artifacts "$repo_dir" "$repo_label"
     fi
 }
 
