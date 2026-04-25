@@ -476,7 +476,6 @@ normalize_admin_base_url() {
 
     printf '%s' "$normalized"
 }
-
 render_online_device_choices() {
     local json_file="$1"
     python3 - "$json_file" <<'PY'
@@ -541,8 +540,7 @@ _download_env_from_portal() {
         return 1
     fi
 
-    log INFO "Connecting to CoBien admin: ${ADMIN_BASE_URL}"
-
+    log INFO "Using CoBien admin base URL: ${ADMIN_BASE_URL}"
     devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
     tmp_json="$(mktemp)"
 
