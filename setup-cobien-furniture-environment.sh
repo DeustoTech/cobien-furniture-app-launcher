@@ -1245,11 +1245,14 @@ run_launcher_setup_mode() {
         --branch "$BRANCH_NAME"
     )
 
+    # Run the launcher with the target user's HOME so $HOME-based path
+    # expansions (WORKSPACE_ROOT_DEFAULT, GLOBAL_CONFIG_DIR, etc.) resolve
+    # correctly even when this setup script is executed as root.
     animate "Preparing the CoBien runtime with cobien-launcher.sh"
     if [[ -n "$MASTER_ENV_FILE" ]]; then
-        COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
+        HOME="$TARGET_HOME" COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
     else
-        "${launcher_cmd[@]}"
+        HOME="$TARGET_HOME" "${launcher_cmd[@]}"
     fi
 }
 
