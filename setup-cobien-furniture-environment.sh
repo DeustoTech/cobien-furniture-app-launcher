@@ -1245,11 +1245,21 @@ run_launcher_setup_mode() {
         --branch "$BRANCH_NAME"
     )
 
+    # If cobien.env was previously generated as root it may contain a stale
+    # COBIEN_WORKSPACE_ROOT pointing to /root. Strip it so the launcher's
+    # --workspace argument wins unconditionally.
+    local master_env="${MASTER_ENV_FILE:-$SCRIPT_DIR/cobien.env}"
+    if [[ -f "$master_env" ]]; then
+        sed -i '/^COBIEN_WORKSPACE_ROOT=/d' "$master_env"
+    fi
+
+    # Run with the target user's HOME so $HOME-based path expansions inside
+    # the launcher resolve correctly even when this script runs as root.
     animate "Preparing the CoBien runtime with cobien-launcher.sh"
     if [[ -n "$MASTER_ENV_FILE" ]]; then
-        COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
+        HOME="$TARGET_HOME" COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
     else
-        "${launcher_cmd[@]}"
+        HOME="$TARGET_HOME" "${launcher_cmd[@]}"
     fi
 }
 

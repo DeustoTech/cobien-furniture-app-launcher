@@ -1063,6 +1063,10 @@ load_master_env_if_present() {
   safe_source_env_file "$MASTER_ENV_FILE"
   # Skip COBIEN_MASTER_ENV_FILE: the path we are reading from should not override itself.
   _absorb_cobien_env_vars COBIEN_MASTER_ENV_FILE
+  # CLI --workspace takes priority over whatever the env file contained.
+  if [[ -n "${_WORKSPACE_ROOT_CLI:-}" ]]; then
+    WORKSPACE_ROOT="$_WORKSPACE_ROOT_CLI"
+  fi
   normalize_device_identity
   set_service_defaults
   resolve_paths
@@ -3599,6 +3603,7 @@ parse_args() {
         ;;
       --workspace)
         WORKSPACE_ROOT="$2"
+        _WORKSPACE_ROOT_CLI="$2"
         shift 2
         ;;
       --frontend-name)
