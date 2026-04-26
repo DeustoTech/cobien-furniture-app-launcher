@@ -24,7 +24,6 @@ INSTALL_SYSTEM_DEPS="${COBIEN_INSTALL_SYSTEM_DEPS:-1}"
 RECREATE_VENV="${COBIEN_RECREATE_VENV:-0}"
 ENABLE_WATCH="${COBIEN_ENABLE_WATCH:-1}"
 INSTALL_CRON="${COBIEN_INSTALL_CRON:-0}"
-INSTALL_SYSTEMD_USER="${COBIEN_INSTALL_SYSTEMD_USER:-0}"
 CRON_SCHEDULE="${COBIEN_CRON_SCHEDULE:-$CRON_SCHEDULE_DEFAULT}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
 AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
@@ -163,7 +162,6 @@ Options:
   --run-update-once
   --enable-watch
   --install-cron
-  --install-systemd-user
   --cron-schedule "0 1 * * *"
   --device-id NAME
   --videocall-room NAME
@@ -395,7 +393,6 @@ print_runtime_summary() {
   if [[ "$INSTALL_CRON" == "1" ]]; then
     print_key_value "Cron schedule" "$CRON_SCHEDULE"
   fi
-  print_key_value "Install systemd" "$INSTALL_SYSTEMD_USER"
   echo
 
   echo "Resolved files"
@@ -432,8 +429,10 @@ run_full_install_plan() {
   fi
 
   if ! has_systemd_user_launcher_service; then
-    INSTALL_SYSTEMD_USER="1"
-    log "First run detected: systemd user service missing, auto-install enabled."
+    log "ERROR: cobien-launcher.service is not installed."
+    log "Run the setup script to provision this device:"
+    log "  sudo COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $LAUNCHER_ROOT/../cobien-furniture-app-launcher/setup-cobien-furniture-environment.sh"
+    exit 1
   fi
 
   reconcile_update_supervision_mode
@@ -495,14 +494,6 @@ run_full_install_plan() {
     install_cron_job
   fi
 
-  if [[ "$INSTALL_SYSTEMD_USER" == "1" ]]; then
-    set_phase "install-systemd"
-    log_section "[3d/4] Installing systemd user services"
-    install_systemd_user_services
-    set_phase "verify-systemd"
-    log_section "[3e/4] Verifying systemd user services"
-    verify_systemd_user_services
-  fi
 
   set_phase "save-last-run-config"
   save_last_run_config
@@ -594,7 +585,7 @@ _COBIEN_ENV_KEYS=(
   COBIEN_TTS_PIPER_VOICE_ES   COBIEN_TTS_PIPER_VOICE_FR   COBIEN_DISABLE_SYSTEM_SLEEP
   COBIEN_OPENWEATHER_CURRENT_URL        COBIEN_OPENWEATHER_FORECAST_URL
   COBIEN_NEWS_API_URL         COBIEN_OPEN_METEO_URL        COBIEN_NOMINATIM_SEARCH_URL
-  COBIEN_CRON_SCHEDULE        COBIEN_INSTALL_SYSTEMD_USER  COBIEN_INSTALL_CRON
+  COBIEN_CRON_SCHEDULE        COBIEN_INSTALL_CRON
   COBIEN_ENABLE_WATCH         COBIEN_RECREATE_VENV         COBIEN_INSTALL_SYSTEM_DEPS
   COBIEN_TTS_PIPER_PROVIDER   COBIEN_TTS_PIPER_VERSION
   COBIEN_NON_INTERACTIVE      COBIEN_AUTO_CONFIRM          COBIEN_BOOTSTRAP_PYTHON_VERSION
@@ -626,7 +617,7 @@ _COBIEN_LOCAL_VARS=(
   TTS_PIPER_VOICE_ES    TTS_PIPER_VOICE_FR    DISABLE_SYSTEM_SLEEP
   OPENWEATHER_CURRENT_URL        OPENWEATHER_FORECAST_URL
   NEWS_API_URL          OPEN_METEO_URL        NOMINATIM_SEARCH_URL
-  CRON_SCHEDULE         INSTALL_SYSTEMD_USER  INSTALL_CRON
+  CRON_SCHEDULE         INSTALL_CRON
   ENABLE_WATCH          RECREATE_VENV         INSTALL_SYSTEM_DEPS
   TTS_PIPER_PROVIDER    TTS_PIPER_VERSION
   NON_INTERACTIVE       AUTO_CONFIRM          PYTHON_REQUEST
@@ -2954,7 +2945,7 @@ restart_software() {
   local relaunch_after_update="${1:-0}"
   log "Relaunching furniture software"
   if [[ "$relaunch_after_update" == "1" ]]; then
-    if [[ "$INSTALL_SYSTEMD_USER" == "1" ]] || has_systemd_user_launcher_service; then
+    if has_systemd_user_launcher_service; then
       log "Update-triggered relaunch detected under systemd supervision."
       log "Delegating restart to cobien-launcher.service to avoid overlapping runtimes."
       release_single_instance_lock
@@ -3087,112 +3078,6 @@ install_cron_job() {
   log "  $cron_line"
 }
 
-install_systemd_user_services() {
-  log "Installing/updating systemd user services..."
-  local systemd_user_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-  local systemd_override_dir="$systemd_user_dir/cobien-launcher.service.d"
-  local autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
-  local autostart_file="$autostart_dir/cobien-import-session-env.desktop"
-  local openbox_dir="${XDG_CONFIG_HOME:-$HOME/.config}/openbox"
-  local openbox_autostart_file="$openbox_dir/autostart"
-  local openbox_sentinel="# CoBien session env import"
-  local timers_wants_dir="$systemd_user_dir/timers.target.wants"
-  mkdir -p "$systemd_user_dir" "$autostart_dir" "$openbox_dir" "$timers_wants_dir"
-
-  if command -v loginctl >/dev/null 2>&1; then
-    loginctl enable-linger "$USER" >/dev/null 2>&1 || true
-    log "Enabled linger for user: $USER"
-  fi
-
-  cat > "$systemd_user_dir/cobien-launcher.service" <<EOF
-[Unit]
-Description=CoBien Launcher (main runtime)
-After=network-online.target
-StartLimitBurst=5
-StartLimitIntervalSec=60
-
-[Service]
-Type=simple
-WorkingDirectory=$LAUNCHER_ROOT
-EnvironmentFile=-$MASTER_ENV_FILE
-Environment="COBIEN_LAUNCHER_ROOT=$LAUNCHER_ROOT"
-Environment="COBIEN_WORKSPACE_ROOT=$WORKSPACE_ROOT"
-Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
-Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
-Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
-ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode launch --non-interactive --yes'
-Restart=always
-RestartSec=5
-KillMode=mixed
-TimeoutStopSec=20
-EOF
-
-  cat > "$systemd_user_dir/cobien-update.service" <<EOF
-[Unit]
-Description=CoBien one-shot update check
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=$LAUNCHER_ROOT
-EnvironmentFile=-$MASTER_ENV_FILE
-Environment="COBIEN_LAUNCHER_ROOT=$LAUNCHER_ROOT"
-Environment="COBIEN_WORKSPACE_ROOT=$WORKSPACE_ROOT"
-Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
-Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
-Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
-ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'
-EOF
-
-  install -m 0644 "$LAUNCHER_ROOT/systemd/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
-  rm -rf "$systemd_override_dir"
-  # Remove legacy symlink that caused the service to auto-start via graphical-session.target
-  # before DISPLAY was imported, leading to duplicate instances.
-  rm -f "$systemd_user_dir/graphical-session.target.wants/cobien-launcher.service"
-
-  cat > "$autostart_file" <<EOF
-[Desktop Entry]
-Type=Application
-Name=CoBien Session Env Import
-Comment=Import GNOME/XFCE/Openbox graphical environment into systemd user services
-Exec=/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh
-X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=2
-X-XFCE-Autostart-enabled=true
-X-MATE-Autostart-enabled=true
-NoDisplay=true
-Terminal=false
-EOF
-
-  if [[ ! -f "$openbox_autostart_file" ]]; then
-    cat > "$openbox_autostart_file" <<EOF
-$openbox_sentinel
-/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh &
-EOF
-  elif ! grep -Fq "$openbox_sentinel" "$openbox_autostart_file"; then
-    printf '\n%s\n%s\n' "$openbox_sentinel" "/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh &" >> "$openbox_autostart_file"
-  fi
-
-  chmod 0644 "$systemd_user_dir/cobien-launcher.service" "$systemd_user_dir/cobien-update.service" "$systemd_user_dir/cobien-update.timer" "$autostart_file" 2>/dev/null || true
-
-  if crontab -l >/dev/null 2>&1; then
-    crontab -l | grep -v "$SELF_SCRIPT --mode update-once" | crontab - || true
-  fi
-
-  ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
-
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
-  # cobien-launcher.service is NOT linked into any .wants/ dir; import-systemd-user-env.sh
-  # is the sole start trigger so that DISPLAY is always imported before the service starts.
-  systemctl --user enable --now cobien-update.timer >/dev/null 2>&1 || true
-  systemctl --user reset-failed cobien-launcher.service >/dev/null 2>&1 || true
-  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-    /bin/bash "$LAUNCHER_ROOT/import-systemd-user-env.sh" >/dev/null 2>&1 || true
-  else
-    log "Graphical session not detected; cobien-launcher.service will start after session env import."
-  fi
-}
 
 has_systemd_user_launcher_service() {
   local service_file="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/cobien-launcher.service"
@@ -3200,7 +3085,7 @@ has_systemd_user_launcher_service() {
 }
 
 reconcile_update_supervision_mode() {
-  if [[ "$INSTALL_SYSTEMD_USER" == "1" ]] || has_systemd_user_launcher_service; then
+  if has_systemd_user_launcher_service; then
     if [[ "$ENABLE_WATCH" == "1" ]]; then
       log "UPDATE: systemd user supervision detected; disabling internal watch loop to keep a single update system."
     fi
@@ -3423,7 +3308,6 @@ print_diagnostics() {
 run_full_flow() {
   local reuse_existing_installation="0"
   local use_last_config="0"
-  local first_run_without_systemd="0"
   local launcher_action="1"
   local master_env_loaded="0"
   local master_env_complete="0"
@@ -3591,9 +3475,8 @@ run_full_flow() {
   resolve_paths
 
   if ! has_systemd_user_launcher_service; then
-    first_run_without_systemd="1"
-    INSTALL_SYSTEMD_USER="1"
-    log "First run detected: systemd user service missing, auto-install enabled."
+    log "ERROR: cobien-launcher.service is not installed. Run the setup script to provision this device."
+    exit 1
   fi
 
   if [[ "$use_last_config" != "1" ]] && is_existing_installation_ready && [[ "$RECREATE_VENV" != "1" ]]; then
@@ -3651,9 +3534,6 @@ run_full_flow() {
     CRON_SCHEDULE="$(ask "Cron expression for updates" "$CRON_SCHEDULE")"
   fi
 
-  if [[ "$NON_INTERACTIVE" != "1" && "$first_run_without_systemd" != "1" ]] && ask_yes_no "Do you want to install/update systemd user services for auto-start" "y"; then
-    INSTALL_SYSTEMD_USER="1"
-  fi
 
   run_full_install_plan "$reuse_existing_installation"
 }
@@ -3698,7 +3578,7 @@ parse_args() {
         shift
         ;;
       --install-systemd-user)
-        INSTALL_SYSTEMD_USER="1"
+        log "WARN: --install-systemd-user is no longer supported. Use the setup script to manage systemd units."
         shift
         ;;
       --cron-schedule)
