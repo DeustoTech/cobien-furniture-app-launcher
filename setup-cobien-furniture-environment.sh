@@ -1195,9 +1195,9 @@ install_rustdesk() {
 
 install_systemd_user_units() {
     local systemd_src_dir="$SCRIPT_DIR/systemd"
-    local systemd_user_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    local systemd_user_dir="$TARGET_HOME/.config/systemd/user"
     local systemd_override_dir="$systemd_user_dir/cobien-launcher.service.d"
-    local autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+    local autostart_dir="$TARGET_HOME/.config/autostart"
     local autostart_file="$autostart_dir/cobien-import-session-env.desktop"
     local timers_wants_dir="$systemd_user_dir/timers.target.wants"
     local graphical_wants_dir="$systemd_user_dir/graphical-session.target.wants"
@@ -1205,14 +1205,18 @@ install_systemd_user_units() {
     mkdir -p "$systemd_user_dir" "$autostart_dir" "$timers_wants_dir"
 
     if command -v loginctl >/dev/null 2>&1; then
-        loginctl enable-linger "$USER" || true
-        print_status_badge OK "Enabled linger for user: $USER"
+        loginctl enable-linger "$TARGET_USER" || true
+        print_status_badge OK "Enabled linger for user: $TARGET_USER"
     fi
 
-    install -m 0644 "$systemd_src_dir/cobien-launcher.service" "$systemd_user_dir/cobien-launcher.service"
-    install -m 0644 "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
-    install -m 0644 "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
+    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
+        "$systemd_src_dir/cobien-launcher.service" "$systemd_user_dir/cobien-launcher.service"
+    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
+        "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
+    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
+        "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
     rm -rf "$systemd_override_dir"
+    chown -R "$TARGET_USER:$TARGET_USER" "$systemd_user_dir" "$autostart_dir"
 
     cat > "$autostart_file" <<EOF
 [Desktop Entry]
@@ -1231,8 +1235,8 @@ EOF
     rm -f "$graphical_wants_dir/cobien-launcher.service"
     ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
 
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    systemctl --user enable cobien-launcher.service cobien-update.timer >/dev/null 2>&1 || true
+    _systemctl_user daemon-reload
+    _systemctl_user enable cobien-launcher.service cobien-update.timer
 
     print_status_badge OK "Systemd user units installed"
     print_status_badge OK "Graphical session import hook installed"
