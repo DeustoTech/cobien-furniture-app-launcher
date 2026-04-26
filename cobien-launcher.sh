@@ -431,7 +431,7 @@ run_full_install_plan() {
   if ! has_systemd_user_launcher_service; then
     log "ERROR: cobien-launcher.service is not installed."
     log "Run the setup script to provision this device:"
-    log "  sudo COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $LAUNCHER_ROOT/../cobien-furniture-app-launcher/setup-cobien-furniture-environment.sh"
+    log "  sudo COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $LAUNCHER_ROOT/setup-cobien-furniture-environment.sh"
     exit 1
   fi
 
