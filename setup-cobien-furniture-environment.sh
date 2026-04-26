@@ -116,16 +116,18 @@ init_colors() {
 }
 
 print_banner() {
-    cat <<EOF
-${COLOR_BOLD}${COLOR_CYAN}
-   ______      ____  _           
-  / ____/___  / __ )(_)__  ____ _
- / /   / __ \/ __  / / _ \/ __ '/
-/ /___/ /_/ / /_/ / /  __/ /_/ / 
-\____/\____/_____/_/\___/\__,_/  
-${COLOR_RESET}
-${COLOR_BOLD}${COLOR_BLUE}Furniture Environment Setup${COLOR_RESET}
-EOF
+    cat <<'BANNER'
+BANNER
+    printf '%b' "${COLOR_BOLD}${COLOR_CYAN}"
+    cat <<'BANNER'
+   ____      ____  _
+  / ___|___ | __ )(_) ___ _ __
+ | |   / _ \|  _ \| |/ _ \ '_ \
+ | |__| (_) | |_) | |  __/ | | |
+  \____\___/|____/|_|\___|_| |_|
+BANNER
+    printf '%b\n' "${COLOR_RESET}"
+    printf '%b%s%b\n' "${COLOR_BOLD}${COLOR_BLUE}" "Furniture Environment Setup" "${COLOR_RESET}"
 }
 
 print_rule() {
