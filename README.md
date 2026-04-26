@@ -104,14 +104,16 @@ This script is still the core runtime controller, but it is no longer the recomm
 
 ### `install-systemd-user.sh`
 
-Compatibility wrapper kept for older operational habits.
+Retired compatibility entrypoint kept only to fail clearly.
 
-The real systemd installation logic now lives in:
+Systemd installation is owned exclusively by:
 
 - `setup-cobien-furniture-environment.sh`
-- `cobien-launcher.sh`
 
-This wrapper exists only so older manual workflows do not fail abruptly.
+The launcher no longer installs or rewrites its own user services. If this
+wrapper is called, it prints the official setup command and exits without
+changing the machine. This prevents an old operational habit from silently
+using a second provisioning path.
 
 ### `import-systemd-user-env.sh`
 
@@ -249,7 +251,7 @@ The current design therefore distinguishes between:
 
 The templates belong in this repository because they are part of deployment policy, not application logic.
 
-If the launcher owns installation, updates, and launch behavior, then it must also own:
+If this repository owns installation, updates, and launch behavior, then it must also own:
 
 - the deployment env contract
 - the runtime env contract
@@ -267,6 +269,10 @@ The default design is:
 - `cobien-update.timer` schedules periodic update checks
 - `cobien-update.service` performs the actual one-shot update check
 - `import-systemd-user-env.sh` bridges the graphical session into `systemd --user`
+
+The setup script is the only code path that installs or refreshes these units.
+The launcher treats a missing `cobien-launcher.service` as an incomplete
+device provisioning and stops with instructions to rerun the setup script.
 
 This avoids relying on ad hoc shell startup files or legacy autostart entries as the main runtime strategy.
 

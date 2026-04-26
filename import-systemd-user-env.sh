@@ -21,7 +21,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user import-environment "${VARS[@]}" >/dev/null 2>&1 || true
-  if systemctl --user is-enabled --quiet cobien-launcher.service 2>/dev/null; then
+  if systemctl --user cat cobien-launcher.service >/dev/null 2>&1; then
     if systemctl --user is-active --quiet cobien-launcher.service 2>/dev/null; then
       printf '[COBIEN] cobien-launcher.service already active; session environment updated\n'
     else
