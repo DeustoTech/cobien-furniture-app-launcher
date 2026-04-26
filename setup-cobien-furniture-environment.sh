@@ -81,7 +81,7 @@ COLOR_ACCENT=""
 
 CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
-STEP_TOTAL=11
+STEP_TOTAL=12
 ONLINE_ENV_FETCHED=0
 LEGACY_CLEANUP_PATHS=()
 LEGACY_CLEANUP_REASONS=()
@@ -697,6 +697,118 @@ run_cmd() {
     "$@"
 }
 
+_systemctl_user() {
+    # Run systemctl --user as TARGET_USER if a live session bus exists.
+    # Falls back to a no-op when the user session is not active (first-time install).
+    local target_uid
+    target_uid="$(id -u "$TARGET_USER" 2>/dev/null)" || return 0
+    local xdg_run="/run/user/$target_uid"
+    local bus="$xdg_run/bus"
+    if [[ ! -S "$bus" ]]; then
+        return 0
+    fi
+    sudo -u "$TARGET_USER" \
+        XDG_RUNTIME_DIR="$xdg_run" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+        systemctl --user "$@" >/dev/null 2>&1 || true
+}
+
+_list_cobien_user_units() {
+    local target_uid
+    target_uid="$(id -u "$TARGET_USER" 2>/dev/null)" || return 0
+    local xdg_run="/run/user/$target_uid"
+    local bus="$xdg_run/bus"
+    [[ -S "$bus" ]] || return 0
+    sudo -u "$TARGET_USER" \
+        XDG_RUNTIME_DIR="$xdg_run" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+        systemctl --user list-units --type=service,timer --all --no-legend 2>/dev/null \
+    | awk '{print $1}' | grep -i '^cobien' || true
+}
+
+stop_and_purge_cobien_installation() {
+    local systemd_user_dir="$USER_HOME/.config/systemd/user"
+    local autostart_dir="$USER_HOME/.config/autostart"
+    local found_units found_files unit f wants_dir
+    local cobien_process_patterns=(
+        "cobien-launcher\.sh"
+        "mainApp\.py"
+        "cobien_bridge"
+        "candump can0"
+    )
+
+    # 1. Stop all cobien systemd user units.
+    found_units="$(_list_cobien_user_units)"
+    if [[ -n "$found_units" ]]; then
+        log WARN "Stopping cobien user units: $(echo "$found_units" | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        _systemctl_user stop $found_units
+        _systemctl_user disable $found_units
+    else
+        print_status_badge OK "No active cobien user units found"
+    fi
+
+    # 2. Kill any remaining cobien-related processes owned by the target user.
+    local pattern pids killed=0
+    for pattern in "${cobien_process_patterns[@]}"; do
+        pids="$(pgrep -u "$TARGET_USER" -f "$pattern" 2>/dev/null || true)"
+        if [[ -n "$pids" ]]; then
+            log WARN "Killing process '$pattern' (PID $pids)"
+            # shellcheck disable=SC2086
+            kill $pids >/dev/null 2>&1 || true
+            killed=1
+        fi
+    done
+    if [[ "$killed" == "1" ]]; then
+        sleep 2
+        for pattern in "${cobien_process_patterns[@]}"; do
+            pkill -9 -u "$TARGET_USER" -f "$pattern" >/dev/null 2>&1 || true
+        done
+        print_status_badge OK "Cobien processes stopped"
+    else
+        print_status_badge OK "No running cobien processes found"
+    fi
+
+    # 3. Remove cobien service and timer files from the systemd user directory.
+    found_files=0
+    for f in "$systemd_user_dir"/cobien-*.service "$systemd_user_dir"/cobien-*.timer; do
+        [[ -e "$f" || -L "$f" ]] || continue
+        log WARN "Removing unit file: $(basename "$f")"
+        rm -f "$f"
+        found_files=1
+    done
+
+    # 4. Remove any cobien symlinks from all wants directories.
+    for wants_dir in \
+        "$systemd_user_dir/graphical-session.target.wants" \
+        "$systemd_user_dir/timers.target.wants" \
+        "$systemd_user_dir/default.target.wants" \
+        "$systemd_user_dir/multi-user.target.wants"
+    do
+        for f in "$wants_dir"/cobien-*.service "$wants_dir"/cobien-*.timer; do
+            [[ -e "$f" || -L "$f" ]] || continue
+            log WARN "Removing wants symlink: $(basename "$f") from $(basename "$wants_dir")"
+            rm -f "$f"
+            found_files=1
+        done
+    done
+
+    # 5. Remove cobien XDG autostart .desktop files.
+    for f in "$autostart_dir"/cobien-*.desktop; do
+        [[ -f "$f" ]] || continue
+        log WARN "Removing autostart entry: $(basename "$f")"
+        rm -f "$f"
+        found_files=1
+    done
+
+    if [[ "$found_files" == "1" ]]; then
+        _systemctl_user daemon-reload
+        print_status_badge OK "Old cobien unit files and autostart entries removed"
+    else
+        print_status_badge OK "No old cobien unit files found"
+    fi
+}
+
 legacy_cleanup_mode_enabled() {
     case "${CLEAN_LEGACY_ARTIFACTS,,}" in
         1|yes|true|on|force) return 0 ;;
@@ -795,6 +907,9 @@ collect_legacy_cleanup_candidates() {
 
     if file_mentions_legacy_frontend_launcher "$autostart_dir/cobien-launcher.desktop"; then
         add_legacy_cleanup_candidate "$autostart_dir/cobien-launcher.desktop" "legacy desktop autostart launching the frontend-owned launcher"
+    fi
+    if [[ -f "$autostart_dir/cobien-launcher.sh.desktop" ]]; then
+        add_legacy_cleanup_candidate "$autostart_dir/cobien-launcher.sh.desktop" "legacy desktop autostart launching the frontend-owned launcher directly"
     fi
     if file_mentions_legacy_frontend_launcher "$autostart_dir/cobien-import-session-env.desktop"; then
         add_legacy_cleanup_candidate "$autostart_dir/cobien-import-session-env.desktop" "legacy desktop autostart importing env from the frontend repository"
@@ -1082,7 +1197,7 @@ install_systemd_user_units() {
     local timers_wants_dir="$systemd_user_dir/timers.target.wants"
     local graphical_wants_dir="$systemd_user_dir/graphical-session.target.wants"
 
-    mkdir -p "$systemd_user_dir" "$autostart_dir" "$timers_wants_dir" "$graphical_wants_dir"
+    mkdir -p "$systemd_user_dir" "$autostart_dir" "$timers_wants_dir"
 
     if command -v loginctl >/dev/null 2>&1; then
         loginctl enable-linger "$USER" || true
@@ -1108,7 +1223,7 @@ NoDisplay=true
 Terminal=false
 EOF
 
-    ln -sfn ../cobien-launcher.service "$graphical_wants_dir/cobien-launcher.service"
+    rm -f "$graphical_wants_dir/cobien-launcher.service"
     ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
 
     systemctl --user daemon-reload >/dev/null 2>&1 || true
@@ -1224,6 +1339,9 @@ main() {
         log ERROR "Preflight checks failed. Fix the missing items and run the setup again."
         exit 1
     fi
+
+    phase "Stopping existing CoBien installation" "Any running cobien process will be stopped and all old unit files, symlinks and autostart entries removed before reinstalling."
+    stop_and_purge_cobien_installation
 
     phase "Cleaning legacy CoBien artifacts" "Old frontend-owned launcher files, stale generated config and old user services can be removed before deployment."
     cleanup_legacy_artifacts
