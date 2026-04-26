@@ -6,4 +6,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=%h/cobien/cobien-furniture-app-launcher
-ExecStart=/bin/bash %h/cobien/cobien-furniture-app-launcher/cobien-launcher.sh --mode update-once --non-interactive --yes --workspace %h/cobien --frontend-name cobien_FrontEnd --mqtt-name cobien_MQTT_Dictionnary --branch master
+EnvironmentFile=-%h/cobien/cobien-furniture-app-launcher/cobien.env
+Environment=COBIEN_LAUNCHER_ROOT=%h/cobien/cobien-furniture-app-launcher
+ExecStart=/bin/bash -lc 'exec "$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'

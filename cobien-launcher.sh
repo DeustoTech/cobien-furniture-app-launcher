@@ -373,7 +373,7 @@ print_runtime_summary() {
     print_key_value "Deployment env" "$MASTER_ENV_FILE"
     print_key_value "Master env mode" "full install"
   fi
-  print_key_value "Reuse install" "$reuse_existing_installation"
+  print_key_value "Reuse install" "${reuse_existing_installation:-0}"
   print_key_value "Install deps" "$INSTALL_SYSTEM_DEPS"
   print_key_value "Recreate .venv" "$RECREATE_VENV"
   print_key_value "Update check" "$RUN_UPDATE_ONCE"
@@ -1573,34 +1573,48 @@ python_fallback_apt_pkg() {
   fi
 }
 
-check_paths() {
-  set_phase "check-paths"
-  resolve_paths
+ensure_runtime_directories() {
   mkdir -p "$GLOBAL_CONFIG_DIR" "$GLOBAL_STATE_DIR" "$GLOBAL_CACHE_DIR" "$GLOBAL_DATA_DIR" "$CONFIG_DIR" "$LOG_DIR" "$RUNTIME_STATE_DIR" "$CACHE_DIR" "$MODELS_DIR" "$PIPER_RUNTIME_DIR"
   mkdir -p "$GLOBAL_DATA_DIR/contacts" "$GLOBAL_DATA_DIR/events"
   mkdir -p "$GLOBAL_CACHE_DIR/weather" "$GLOBAL_CACHE_DIR/board_cache" "$GLOBAL_CACHE_DIR/notifications/cache"
-  [[ -d "$FRONTEND_REPO/.git" ]] || { log "Frontend repository not found: $FRONTEND_REPO"; exit 1; }
-  [[ -d "$MQTT_REPO/.git" ]] || { log "MQTT repository not found: $MQTT_REPO"; exit 1; }
-  [[ -d "$FRONTEND_APP_DIR" ]] || { log "Frontend app directory not found: $FRONTEND_APP_DIR"; exit 1; }
-  [[ -d "$BRIDGE_DIR" ]] || { log "Bridge directory not found: $BRIDGE_DIR"; exit 1; }
-  [[ -f "$SELF_SCRIPT" ]] || { log "Launcher script not found: $SELF_SCRIPT"; exit 1; }
-  [[ -f "$FRONTEND_APP_DIR/mainApp.py" ]] || { log "Frontend entrypoint missing: $FRONTEND_APP_DIR/mainApp.py"; exit 1; }
-  [[ -f "$FRONTEND_APP_DIR/pyproject.toml" ]] || { log "Pyproject missing: $FRONTEND_APP_DIR/pyproject.toml"; exit 1; }
-  [[ -f "$FRONTEND_APP_DIR/config/config.default.json" ]] || { log "Default unified config missing: $FRONTEND_APP_DIR/config/config.default.json"; exit 1; }
-  [[ -f "$FRONTEND_APP_DIR/config_runtime.py" ]] || { log "Launcher config contract missing: $FRONTEND_APP_DIR/config_runtime.py"; exit 1; }
-  [[ -f "$FRONTEND_APP_DIR/VERSION" ]] || { log "Version file missing: $FRONTEND_APP_DIR/VERSION"; exit 1; }
-  [[ -f "$CAN_CONFIG" ]] || { log "CAN conversion config missing: $CAN_CONFIG"; exit 1; }
-  [[ -f "$BRIDGE_DIR/Makefile" ]] || { log "Bridge Makefile missing: $BRIDGE_DIR/Makefile"; exit 1; }
+}
+
+check_paths_readonly() {
+  set_phase "check-paths"
+  resolve_paths
+  [[ -d "$FRONTEND_REPO/.git" ]] || { log "Frontend repository not found: $FRONTEND_REPO"; return 1; }
+  [[ -d "$MQTT_REPO/.git" ]] || { log "MQTT repository not found: $MQTT_REPO"; return 1; }
+  [[ -d "$FRONTEND_APP_DIR" ]] || { log "Frontend app directory not found: $FRONTEND_APP_DIR"; return 1; }
+  [[ -d "$BRIDGE_DIR" ]] || { log "Bridge directory not found: $BRIDGE_DIR"; return 1; }
+  [[ -f "$SELF_SCRIPT" ]] || { log "Launcher script not found: $SELF_SCRIPT"; return 1; }
+  [[ -f "$FRONTEND_APP_DIR/mainApp.py" ]] || { log "Frontend entrypoint missing: $FRONTEND_APP_DIR/mainApp.py"; return 1; }
+  [[ -f "$FRONTEND_APP_DIR/pyproject.toml" ]] || { log "Pyproject missing: $FRONTEND_APP_DIR/pyproject.toml"; return 1; }
+  [[ -f "$FRONTEND_APP_DIR/config/config.default.json" ]] || { log "Default unified config missing: $FRONTEND_APP_DIR/config/config.default.json"; return 1; }
+  [[ -f "$FRONTEND_APP_DIR/config_runtime.py" ]] || { log "Launcher config contract missing: $FRONTEND_APP_DIR/config_runtime.py"; return 1; }
+  [[ -f "$FRONTEND_APP_DIR/VERSION" ]] || { log "Version file missing: $FRONTEND_APP_DIR/VERSION"; return 1; }
+  [[ -f "$CAN_CONFIG" ]] || { log "CAN conversion config missing: $CAN_CONFIG"; return 1; }
+  [[ -f "$BRIDGE_DIR/Makefile" ]] || { log "Bridge Makefile missing: $BRIDGE_DIR/Makefile"; return 1; }
+}
+
+check_paths() {
+  resolve_paths
+  ensure_runtime_directories
+  check_paths_readonly
 }
 
 validate_runtime_file_dependencies() {
+  local access_mode="${1:-write}"
   set_phase "validate-runtime-files"
-  check_paths
+  if [[ "$access_mode" == "readonly" ]]; then
+    check_paths_readonly
+  else
+    check_paths
+  fi
   local service_dir="$LAUNCHER_ROOT/systemd"
-  [[ -f "$service_dir/cobien-launcher.service" ]] || { log "systemd launcher unit missing: $service_dir/cobien-launcher.service"; exit 1; }
-  [[ -f "$service_dir/cobien-update.service" ]] || { log "systemd update unit missing: $service_dir/cobien-update.service"; exit 1; }
-  [[ -f "$service_dir/cobien-update.timer" ]] || { log "systemd update timer missing: $service_dir/cobien-update.timer"; exit 1; }
-  [[ -f "$LAUNCHER_ROOT/import-systemd-user-env.sh" ]] || { log "session env import helper missing: $LAUNCHER_ROOT/import-systemd-user-env.sh"; exit 1; }
+  [[ -f "$service_dir/cobien-launcher.service" ]] || { log "systemd launcher unit missing: $service_dir/cobien-launcher.service"; return 1; }
+  [[ -f "$service_dir/cobien-update.service" ]] || { log "systemd update unit missing: $service_dir/cobien-update.service"; return 1; }
+  [[ -f "$service_dir/cobien-update.timer" ]] || { log "systemd update timer missing: $service_dir/cobien-update.timer"; return 1; }
+  [[ -f "$LAUNCHER_ROOT/import-systemd-user-env.sh" ]] || { log "session env import helper missing: $LAUNCHER_ROOT/import-systemd-user-env.sh"; return 1; }
 }
 
 can_perform_privileged_installs() {
@@ -2565,7 +2579,14 @@ ensure_mosquitto_running() {
 
 install_can_sudoers_rule() {
   local current_user sudoers_file can_bitrate
-  current_user="$(id -un)"
+  current_user="${COBIEN_CAN_SUDOERS_USER:-${SUDO_USER:-$(id -un)}}"
+  if [[ -z "$current_user" || "$current_user" == "root" ]]; then
+    current_user="$(id -un)"
+  fi
+  if [[ ! "$current_user" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] || ! id "$current_user" >/dev/null 2>&1; then
+    log "ERROR: Invalid CAN sudoers user: $current_user"
+    return 1
+  fi
   sudoers_file="/etc/sudoers.d/cobien-can"
   can_bitrate="${COBIEN_CAN_BITRATE:-500000}"
 
@@ -3068,7 +3089,6 @@ install_cron_job() {
 
 install_systemd_user_services() {
   log "Installing/updating systemd user services..."
-  local systemd_src_dir="$LAUNCHER_ROOT/systemd"
   local systemd_user_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   local systemd_override_dir="$systemd_user_dir/cobien-launcher.service.d"
   local autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
@@ -3084,9 +3104,48 @@ install_systemd_user_services() {
     log "Enabled linger for user: $USER"
   fi
 
-  install -m 0644 "$systemd_src_dir/cobien-launcher.service" "$systemd_user_dir/cobien-launcher.service"
-  install -m 0644 "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
-  install -m 0644 "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
+  cat > "$systemd_user_dir/cobien-launcher.service" <<EOF
+[Unit]
+Description=CoBien Launcher (main runtime)
+After=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+WorkingDirectory=$LAUNCHER_ROOT
+EnvironmentFile=-$MASTER_ENV_FILE
+Environment="COBIEN_LAUNCHER_ROOT=$LAUNCHER_ROOT"
+Environment="COBIEN_WORKSPACE_ROOT=$WORKSPACE_ROOT"
+Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
+Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
+Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
+ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode launch --non-interactive --yes'
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=20
+EOF
+
+  cat > "$systemd_user_dir/cobien-update.service" <<EOF
+[Unit]
+Description=CoBien one-shot update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$LAUNCHER_ROOT
+EnvironmentFile=-$MASTER_ENV_FILE
+Environment="COBIEN_LAUNCHER_ROOT=$LAUNCHER_ROOT"
+Environment="COBIEN_WORKSPACE_ROOT=$WORKSPACE_ROOT"
+Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
+Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
+Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
+ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'
+EOF
+
+  install -m 0644 "$LAUNCHER_ROOT/systemd/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
   rm -rf "$systemd_override_dir"
   # Remove legacy symlink that caused the service to auto-start via graphical-session.target
   # before DISPLAY was imported, leading to duplicate instances.
@@ -3115,6 +3174,8 @@ EOF
     printf '\n%s\n%s\n' "$openbox_sentinel" "/bin/bash $LAUNCHER_ROOT/import-systemd-user-env.sh &" >> "$openbox_autostart_file"
   fi
 
+  chmod 0644 "$systemd_user_dir/cobien-launcher.service" "$systemd_user_dir/cobien-update.service" "$systemd_user_dir/cobien-update.timer" "$autostart_file" 2>/dev/null || true
+
   if crontab -l >/dev/null 2>&1; then
     crontab -l | grep -v "$SELF_SCRIPT --mode update-once" | crontab - || true
   fi
@@ -3124,10 +3185,13 @@ EOF
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   # cobien-launcher.service is NOT linked into any .wants/ dir; import-systemd-user-env.sh
   # is the sole start trigger so that DISPLAY is always imported before the service starts.
-  systemctl --user enable cobien-launcher.service >/dev/null 2>&1 || true
   systemctl --user enable --now cobien-update.timer >/dev/null 2>&1 || true
   systemctl --user reset-failed cobien-launcher.service >/dev/null 2>&1 || true
-  systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    /bin/bash "$LAUNCHER_ROOT/import-systemd-user-env.sh" >/dev/null 2>&1 || true
+  else
+    log "Graphical session not detected; cobien-launcher.service will start after session env import."
+  fi
 }
 
 has_systemd_user_launcher_service() {
@@ -3162,16 +3226,19 @@ verify_systemd_user_services() {
 
   log "Running systemd user verification..."
   systemctl --user daemon-reload
-  systemctl --user enable cobien-launcher.service cobien-update.timer >/dev/null 2>&1 || true
+  if ! systemctl --user cat cobien-launcher.service >/dev/null 2>&1; then
+    log "Verification FAILED: cobien-launcher.service is not installed"
+    return 1
+  fi
+  systemctl --user enable --now cobien-update.timer >/dev/null 2>&1 || true
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    /bin/bash "$LAUNCHER_ROOT/import-systemd-user-env.sh" >/dev/null 2>&1 || true
+  fi
   if is_running_inside_systemd_user_service || systemctl --user is-active --quiet cobien-launcher.service 2>/dev/null; then
     log "cobien-launcher.service already active; skipping restart"
-  else
-    systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
-  fi
-  systemctl --user start cobien-update.timer >/dev/null 2>&1 || true
-
-  if systemctl --user is-active --quiet cobien-launcher.service; then
     log "Verification OK: cobien-launcher.service is active"
+  elif [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    log "Verification OK: launcher unit is installed; start is deferred until graphical session env import"
   else
     log "Verification FAILED: cobien-launcher.service is not active"
     return 1
@@ -3187,10 +3254,10 @@ verify_systemd_user_services() {
 
 print_dry_run() {
   set_phase "dry-run"
-  check_paths
+  check_paths_readonly
   load_env_file
   normalize_device_identity
-  validate_runtime_file_dependencies
+  validate_runtime_file_dependencies readonly
   log "MODE=$MODE"
   log "WORKSPACE_ROOT=$WORKSPACE_ROOT"
   log "FRONTEND_REPO=$FRONTEND_REPO"
@@ -3264,10 +3331,10 @@ print_diagnostics() {
   # Non-destructive diagnostics to help debug Piper/install/runtime issues
   set_phase "diagnostics"
   set +e
-  check_paths || true
+  check_paths_readonly || true
   load_env_file || true
   normalize_device_identity || true
-  validate_runtime_file_dependencies || true
+  validate_runtime_file_dependencies readonly || true
 
   log_section "Diagnostics"
   log "User: $(id -un 2>/dev/null || true) (uid=$(id -u 2>/dev/null || true))"
@@ -3795,7 +3862,7 @@ parse_args() {
 main() {
   init_colors
   parse_args "$@"
-  if [[ "$MODE" != "update-once" ]]; then
+  if [[ "$MODE" != "update-once" && "$MODE" != "dry-run" && "$MODE" != "diagnose" ]]; then
     prepare_manual_launcher_takeover
     acquire_single_instance_lock
   fi

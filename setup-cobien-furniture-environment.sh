@@ -1113,6 +1113,7 @@ fi
 EOF
 
     chmod +x "$USER_HOME/.config/openbox/autostart"
+    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox"
 }
 
 configure_kiosk_power_management() {
@@ -1194,7 +1195,6 @@ install_rustdesk() {
 }
 
 install_systemd_user_units() {
-    local systemd_src_dir="$SCRIPT_DIR/systemd"
     local systemd_user_dir="$TARGET_HOME/.config/systemd/user"
     local systemd_override_dir="$systemd_user_dir/cobien-launcher.service.d"
     local autostart_dir="$TARGET_HOME/.config/autostart"
@@ -1209,14 +1209,51 @@ install_systemd_user_units() {
         print_status_badge OK "Enabled linger for user: $TARGET_USER"
     fi
 
+    cat > "$systemd_user_dir/cobien-launcher.service" <<EOF
+[Unit]
+Description=CoBien Launcher (main runtime)
+After=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile=-$SCRIPT_DIR/cobien.env
+Environment="COBIEN_LAUNCHER_ROOT=$SCRIPT_DIR"
+Environment="COBIEN_WORKSPACE_ROOT=$PROJECT_DIR"
+Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
+Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
+Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
+ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode launch --non-interactive --yes'
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=20
+EOF
+
+    cat > "$systemd_user_dir/cobien-update.service" <<EOF
+[Unit]
+Description=CoBien one-shot update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile=-$SCRIPT_DIR/cobien.env
+Environment="COBIEN_LAUNCHER_ROOT=$SCRIPT_DIR"
+Environment="COBIEN_WORKSPACE_ROOT=$PROJECT_DIR"
+Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
+Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
+Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
+ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'
+EOF
+
     install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
-        "$systemd_src_dir/cobien-launcher.service" "$systemd_user_dir/cobien-launcher.service"
-    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
-        "$systemd_src_dir/cobien-update.service" "$systemd_user_dir/cobien-update.service"
-    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
-        "$systemd_src_dir/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
+        "$SCRIPT_DIR/systemd/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
     rm -rf "$systemd_override_dir"
-    chown -R "$TARGET_USER:$TARGET_USER" "$systemd_user_dir" "$autostart_dir"
+    rm -f "$graphical_wants_dir/cobien-launcher.service"
 
     cat > "$autostart_file" <<EOF
 [Desktop Entry]
@@ -1232,14 +1269,31 @@ NoDisplay=true
 Terminal=false
 EOF
 
-    rm -f "$graphical_wants_dir/cobien-launcher.service"
     ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
+    chown -R "$TARGET_USER:$TARGET_USER" "$systemd_user_dir" "$autostart_dir"
+    chmod 0644 "$systemd_user_dir/cobien-launcher.service" "$systemd_user_dir/cobien-update.service" "$systemd_user_dir/cobien-update.timer" "$autostart_file"
 
     _systemctl_user daemon-reload
-    _systemctl_user enable cobien-launcher.service cobien-update.timer
+    _systemctl_user enable --now cobien-update.timer
 
     print_status_badge OK "Systemd user units installed"
     print_status_badge OK "Graphical session import hook installed"
+}
+
+fix_target_runtime_ownership() {
+    local path
+    for path in \
+        "$PROJECT_DIR" \
+        "$USER_HOME/.config/cobien" \
+        "$USER_HOME/.cache/cobien" \
+        "$USER_HOME/.cache/uv" \
+        "$USER_HOME/.local/state/cobien" \
+        "$USER_HOME/.local/share/cobien" \
+        "$USER_HOME/.local/bin/uv"
+    do
+        [[ -e "$path" || -L "$path" ]] || continue
+        chown -R "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true
+    done
 }
 
 run_launcher_setup_mode() {
@@ -1266,10 +1320,11 @@ run_launcher_setup_mode() {
     # the launcher resolve correctly even when this script runs as root.
     animate "Preparing the CoBien runtime with cobien-launcher.sh"
     if [[ -n "$MASTER_ENV_FILE" ]]; then
-        HOME="$TARGET_HOME" COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
+        HOME="$TARGET_HOME" COBIEN_CAN_SUDOERS_USER="$TARGET_USER" COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
     else
-        HOME="$TARGET_HOME" "${launcher_cmd[@]}"
+        HOME="$TARGET_HOME" COBIEN_CAN_SUDOERS_USER="$TARGET_USER" "${launcher_cmd[@]}"
     fi
+    fix_target_runtime_ownership
 }
 
 finalize_with_reboot() {
@@ -1370,6 +1425,7 @@ main() {
 
     phase "Preparing workspace" "The furniture repositories will live under the target workspace."
     run_cmd "Creating workspace directory" mkdir -p "$PROJECT_DIR"
+    chown "$TARGET_USER:$TARGET_USER" "$PROJECT_DIR"
 
     phase "Syncing repositories" "The production repositories will be cloned or updated on branch ${BRANCH_NAME}."
     ensure_repo "$PROJECT_DIR/$FRONTEND_REPO_NAME" "$FRONTEND_REPO" "frontend"
