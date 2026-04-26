@@ -1054,6 +1054,9 @@ ensure_repo() {
 
     if [ -d "$repo_dir/.git" ]; then
         phase "Syncing ${repo_label}" "Refreshing the existing checkout on branch ${BRANCH_NAME}."
+        # If the repo was previously cloned as root git refuses to operate in it
+        # as another user. Fix ownership first so git commands succeed.
+        chown -R "$TARGET_USER:$TARGET_USER" "$repo_dir" 2>/dev/null || true
         (
             cd "$repo_dir"
             run_cmd "Fetching ${repo_label}" git fetch origin "$BRANCH_NAME"
@@ -1078,6 +1081,8 @@ ensure_repo() {
         run_cmd "Cloning ${repo_label} into $(basename "$repo_dir")" \
             git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
     fi
+    # Ensure all repo files are owned by the target user regardless of who ran git.
+    chown -R "$TARGET_USER:$TARGET_USER" "$repo_dir" 2>/dev/null || true
 }
 
 write_openbox_autostart() {
