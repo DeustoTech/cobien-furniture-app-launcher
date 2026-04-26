@@ -796,6 +796,9 @@ collect_legacy_cleanup_candidates() {
     if file_mentions_legacy_frontend_launcher "$autostart_dir/cobien-launcher.desktop"; then
         add_legacy_cleanup_candidate "$autostart_dir/cobien-launcher.desktop" "legacy desktop autostart launching the frontend-owned launcher"
     fi
+    if [[ -f "$autostart_dir/cobien-launcher.sh.desktop" ]]; then
+        add_legacy_cleanup_candidate "$autostart_dir/cobien-launcher.sh.desktop" "legacy desktop autostart launching the frontend-owned launcher directly"
+    fi
     if file_mentions_legacy_frontend_launcher "$autostart_dir/cobien-import-session-env.desktop"; then
         add_legacy_cleanup_candidate "$autostart_dir/cobien-import-session-env.desktop" "legacy desktop autostart importing env from the frontend repository"
     fi
@@ -1082,7 +1085,7 @@ install_systemd_user_units() {
     local timers_wants_dir="$systemd_user_dir/timers.target.wants"
     local graphical_wants_dir="$systemd_user_dir/graphical-session.target.wants"
 
-    mkdir -p "$systemd_user_dir" "$autostart_dir" "$timers_wants_dir" "$graphical_wants_dir"
+    mkdir -p "$systemd_user_dir" "$autostart_dir" "$timers_wants_dir"
 
     if command -v loginctl >/dev/null 2>&1; then
         loginctl enable-linger "$USER" || true
@@ -1108,7 +1111,7 @@ NoDisplay=true
 Terminal=false
 EOF
 
-    ln -sfn ../cobien-launcher.service "$graphical_wants_dir/cobien-launcher.service"
+    rm -f "$graphical_wants_dir/cobien-launcher.service"
     ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
 
     systemctl --user daemon-reload >/dev/null 2>&1 || true
