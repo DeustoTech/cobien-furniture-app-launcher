@@ -2170,9 +2170,18 @@ configure_tts_runtime() {
     return 1
   fi
 
+  if [[ -n "$TTS_PIPER_BIN" && -f "$TTS_PIPER_BIN" && ! -x "$TTS_PIPER_BIN" ]]; then
+    chmod +x "$TTS_PIPER_BIN" 2>/dev/null || sudo chmod +x "$TTS_PIPER_BIN" 2>/dev/null || true
+  fi
+
   if [[ -z "$TTS_PIPER_BIN" || ! -x "$TTS_PIPER_BIN" ]]; then
-    log "ERROR: Piper binary is not executable after setup: ${TTS_PIPER_BIN:-unset}"
-    return 1
+    if can_perform_privileged_installs; then
+      log "ERROR: Piper binary is not executable after setup: ${TTS_PIPER_BIN:-unset}"
+      return 1
+    fi
+    log "WARN: Piper binary unavailable: ${TTS_PIPER_BIN:-unset}. TTS will be disabled for this session."
+    TTS_PIPER_BIN=""
+    return 0
   fi
 
   for required_model in \
