@@ -90,6 +90,8 @@ BOOTSTRAP_APT_PACKAGES=(
     curl
     openbox
     lightdm
+    xbindkeys
+    libnotify-bin
     tint2
     xterm
     x11-xserver-utils
@@ -1089,6 +1091,76 @@ ensure_repo() {
 
 write_openbox_autostart() {
     mkdir -p "$USER_HOME/.config/openbox"
+    mkdir -p "$USER_HOME/.config/cobien"
+
+    cat > "$USER_HOME/.config/cobien/volume-osd.sh" <<'EOF'
+#!/usr/bin/env bash
+set -u
+
+step="${1:-5%}"
+direction="${2:-up}"
+
+if ! command -v pactl >/dev/null 2>&1; then
+    exit 0
+fi
+
+default_sink="$(pactl get-default-sink 2>/dev/null || true)"
+if [ -z "$default_sink" ]; then
+    exit 0
+fi
+
+case "$direction" in
+    up)
+        pactl set-sink-volume "$default_sink" "+${step}" >/dev/null 2>&1 || exit 0
+        icon="audio-volume-high"
+        label="Volume up"
+        ;;
+    down)
+        pactl set-sink-volume "$default_sink" "-${step}" >/dev/null 2>&1 || exit 0
+        icon="audio-volume-low"
+        label="Volume down"
+        ;;
+    mute)
+        pactl set-sink-mute "$default_sink" toggle >/dev/null 2>&1 || exit 0
+        icon="audio-volume-muted"
+        label="Mute"
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+volume_line="$(pactl get-sink-volume "$default_sink" 2>/dev/null | sed -n 's/.*\/ *\([0-9]\+%\).*/\1/p' | head -n1)"
+mute_state="$(pactl get-sink-mute "$default_sink" 2>/dev/null | awk '{print $2}')"
+
+if [ "$mute_state" = "yes" ]; then
+    icon="audio-volume-muted"
+    body="Muted"
+else
+    body="${volume_line:-Unknown}"
+fi
+
+if command -v notify-send >/dev/null 2>&1; then
+    notify-send \
+        --app-name="CoBien" \
+        --expire-time=900 \
+        --hint=int:value:"${volume_line%%%}" \
+        --icon="$icon" \
+        "$label" \
+        "$body" >/dev/null 2>&1 || true
+fi
+EOF
+
+    cat > "$USER_HOME/.xbindkeysrc" <<'EOF'
+"$HOME/.config/cobien/volume-osd.sh 5% up"
+    XF86AudioRaiseVolume
+
+"$HOME/.config/cobien/volume-osd.sh 5% down"
+    XF86AudioLowerVolume
+
+"$HOME/.config/cobien/volume-osd.sh 5% mute"
+    XF86AudioMute
+EOF
 
     cat > "$USER_HOME/.config/openbox/autostart" <<EOF
 #!/usr/bin/env bash
@@ -1153,10 +1225,16 @@ fi
 if [ "${INSTALL_RUSTDESK}" = "1" ] && [ -x "/usr/bin/rustdesk" ]; then
   pgrep -u "${USER_NAME}" -x rustdesk >/dev/null || /usr/bin/rustdesk ${RUSTDESK_ARGS} >/tmp/cobien-rustdesk.log 2>&1 &
 fi
+
+if command -v xbindkeys >/dev/null 2>&1; then
+    pkill -u "${USER_NAME}" -x xbindkeys >/dev/null 2>&1 || true
+    xbindkeys >/tmp/cobien-xbindkeys.log 2>&1 &
+fi
 EOF
 
     chmod +x "$USER_HOME/.config/openbox/autostart"
-    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox"
+        chmod +x "$USER_HOME/.config/cobien/volume-osd.sh"
+        chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.xbindkeysrc"
 }
 
 configure_kiosk_power_management() {
