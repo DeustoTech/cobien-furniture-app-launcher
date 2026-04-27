@@ -2184,7 +2184,8 @@ configure_tts_runtime() {
   fi
 
   if [[ -n "$TTS_PIPER_BIN" && -f "$TTS_PIPER_BIN" && ! -x "$TTS_PIPER_BIN" ]]; then
-    chmod +x "$TTS_PIPER_BIN" 2>/dev/null || sudo chmod +x "$TTS_PIPER_BIN" 2>/dev/null || true
+    chmod +x "$TTS_PIPER_BIN" 2>/dev/null || \
+      { can_perform_privileged_installs && sudo chmod +x "$TTS_PIPER_BIN" 2>/dev/null; } || true
   fi
 
   if [[ -z "$TTS_PIPER_BIN" || ! -x "$TTS_PIPER_BIN" ]]; then
