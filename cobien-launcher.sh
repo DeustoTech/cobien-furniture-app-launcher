@@ -1636,6 +1636,10 @@ checkout_branch() {
   git -C "$repo" checkout "$BRANCH_NAME"
 }
 
+apt_get_locked() {
+  sudo apt-get -o DPkg::Lock::Timeout=120 "$@"
+}
+
 install_system_deps_fn() {
   local required_packages=(
     git curl wget build-essential cmake pkg-config
@@ -1674,9 +1678,9 @@ install_system_deps_fn() {
   log_phase_banner "System dependencies" "Installing OS packages required by the launcher, audio stack, GTK/WebRTC runtime and build tools."
   log "APT: Missing launcher system packages: ${missing_packages[*]}"
   animate_status "Refreshing apt metadata"
-  sudo apt update
+  apt_get_locked update
   animate_status "Installing base runtime packages"
-  sudo apt install -y "${missing_packages[@]}"
+  apt_get_locked install -y "${missing_packages[@]}"
   log "OK: System dependencies installed. Python runtime version selection is handled by uv."
 }
 
@@ -1711,9 +1715,9 @@ ensure_runtime_dependencies() {
       return 1
     fi
     log "Installing missing runtime dependencies (sudo may ask for password)..."
-    sudo apt update
+    apt_get_locked update
     apt_updated="1"
-    sudo apt install -y "${missing_packages[@]}"
+    apt_get_locked install -y "${missing_packages[@]}"
   fi
 
   if ! command -v python3 >/dev/null 2>&1; then
@@ -1723,13 +1727,13 @@ ensure_runtime_dependencies() {
       return 1
     fi
     log "Python 3 base runtime missing. Installing generic python3 package so uv can bootstrap the requested interpreter."
-    if [[ "$apt_updated" != "1" ]]; then sudo apt update; apt_updated="1"; fi
+    if [[ "$apt_updated" != "1" ]]; then apt_get_locked update; apt_updated="1"; fi
     local python_packages=()
     append_missing_apt_package "python3" python_packages
     append_missing_apt_package "python3-venv" python_packages
     append_missing_apt_package "python3-pip" python_packages
     if [[ "${#python_packages[@]}" -gt 0 ]]; then
-      sudo apt install -y "${python_packages[@]}"
+      apt_get_locked install -y "${python_packages[@]}"
     fi
   fi
 }
@@ -1876,8 +1880,8 @@ configure_tts_runtime() {
     # Try to install piper-tts using snap (preferred for persistence)
     if ! command -v snap >/dev/null 2>&1; then
       log "snap not found; attempting to install snapd via apt"
-      sudo apt update || true
-      sudo apt install -y snapd || return 1
+      apt_get_locked update || true
+      apt_get_locked install -y snapd || return 1
       # allow snapd to setup
       sleep 1
     fi
@@ -1972,8 +1976,8 @@ configure_tts_runtime() {
       return 1
     fi
     log "Piper TTS selected but binary not found. Trying apt install..."
-    sudo apt update || true
-    sudo apt install -y piper-tts || true
+    apt_get_locked update || true
+    apt_get_locked install -y piper-tts || true
 
     if command -v piper >/dev/null 2>&1; then
       TTS_PIPER_BIN="$(command -v piper)"
@@ -2518,8 +2522,8 @@ ensure_mosquitto_running() {
       return
     fi
     log "Mosquitto binary not found. Installing it now (sudo may ask for password)..."
-    sudo apt update
-    sudo apt install -y mosquitto mosquitto-clients
+    apt_get_locked update
+    apt_get_locked install -y mosquitto mosquitto-clients
     if ! command -v mosquitto >/dev/null 2>&1; then
       log "Mosquitto installation failed or binary still unavailable."
       return
