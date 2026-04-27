@@ -2794,6 +2794,7 @@ write_env_file() {
 load_env_file() {
   if [[ -f "$ENV_FILE" ]]; then
     safe_source_env_file "$ENV_FILE"
+    _absorb_cobien_env_vars
   fi
   load_master_env_if_present || true
   normalize_device_identity
