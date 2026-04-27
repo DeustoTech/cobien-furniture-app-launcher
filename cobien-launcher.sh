@@ -1464,6 +1464,10 @@ ask_secret_required() {
       echo "$answer"
       return
     fi
+    if [[ -n "${current_value//[[:space:]]/}" ]]; then
+      echo "$current_value"
+      return
+    fi
     echo "This value is required."
   done
 }
