@@ -2797,13 +2797,45 @@ resolve_python_bin() {
 }
 
 _install_uv_from_github() {
+  local install_dir installer_script
   log "Installing uv via official installer (https://astral.sh/uv/install.sh)"
-  mkdir -p "$HOME/.local/bin"
-  # UV_INSTALL_DIR tells the installer where to put the binary
-  if UV_INSTALL_DIR="$HOME/.local/bin" curl -LsSf https://astral.sh/uv/install.sh | sh; then
-    log "uv installed at $HOME/.local/bin/uv"
+  install_dir="$HOME/.local/bin"
+
+  if [[ -e "$install_dir" && ! -d "$install_dir" ]]; then
+    log "ERROR: uv install target exists but is not a directory: $install_dir"
+    return 1
+  fi
+
+  mkdir -p "$install_dir"
+  if [[ ! -w "$install_dir" ]]; then
+    log "ERROR: uv install target is not writable by $(id -un): $install_dir"
+    log "ERROR: Fix ownership/permissions for $install_dir before relaunching the kiosk."
+    return 1
+  fi
+
+  if [[ -d "$install_dir/uv" ]]; then
+    log "WARN: Removing broken uv directory left by a previous failed install: $install_dir/uv"
+    rm -rf "$install_dir/uv" || true
+  fi
+
+  installer_script="$(mktemp)"
+  if ! curl -LsSf https://astral.sh/uv/install.sh -o "$installer_script"; then
+    rm -f "$installer_script" || true
+    log "ERROR: Failed to download uv installer"
+    return 1
+  fi
+
+  # UV_INSTALL_DIR must be exported to the shell that actually runs the installer.
+  if env UV_INSTALL_DIR="$install_dir" sh "$installer_script"; then
+    rm -f "$installer_script" || true
+    if [[ -x "$install_dir/uv" ]]; then
+      log "uv installed at $install_dir/uv"
+      return 0
+    fi
+    log "ERROR: uv installer completed but no executable was found at $install_dir/uv"
     return 0
   fi
+  rm -f "$installer_script" || true
   log "ERROR: uv installer failed"
   return 1
 }
