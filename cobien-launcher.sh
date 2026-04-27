@@ -1637,6 +1637,18 @@ checkout_branch() {
 }
 
 apt_get_locked() {
+  # DPkg::Lock::Timeout covers /var/lib/dpkg/lock* but NOT /var/lib/apt/lists/lock.
+  # Wait for the lists lock separately before calling apt-get.
+  local waited=0
+  while ! sudo flock -n /var/lib/apt/lists/lock true 2>/dev/null; do
+    if [[ $waited -ge 300 ]]; then
+      log "APT: Timed out waiting for apt lists lock after 300s — proceeding anyway"
+      break
+    fi
+    [[ $waited -eq 0 ]] && log "APT: Waiting for apt lists lock to be released..."
+    sleep 5
+    waited=$((waited + 5))
+  done
   sudo apt-get -o DPkg::Lock::Timeout=120 "$@"
 }
 
