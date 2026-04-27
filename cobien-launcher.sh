@@ -109,7 +109,6 @@ NEWS_API_URL="${COBIEN_NEWS_API_URL:-https://newsapi.org/v2/top-headlines}"
 OPEN_METEO_URL="${COBIEN_OPEN_METEO_URL:-https://api.open-meteo.com/v1/forecast}"
 NOMINATIM_SEARCH_URL="${COBIEN_NOMINATIM_SEARCH_URL:-https://nominatim.openstreetmap.org/search}"
 TTS_PIPER_RELEASE_TAG_DEFAULT="2023.11.14-2"
-UV_INSTALL_VERSION="${COBIEN_UV_INSTALL_VERSION:-0.11.7}"
 [[ -z "$TTS_PIPER_MODEL_ES_MALE_URL" ]] && TTS_PIPER_MODEL_ES_MALE_URL="$TTS_PIPER_DEFAULT_MODEL_ES_MALE_URL"
 [[ -z "$TTS_PIPER_MODEL_ES_FEMALE_URL" ]] && TTS_PIPER_MODEL_ES_FEMALE_URL="$TTS_PIPER_DEFAULT_MODEL_ES_FEMALE_URL"
 [[ -z "$TTS_PIPER_MODEL_FR_MALE_URL" ]] && TTS_PIPER_MODEL_FR_MALE_URL="$TTS_PIPER_DEFAULT_MODEL_FR_MALE_URL"
@@ -2798,68 +2797,15 @@ resolve_python_bin() {
 }
 
 _install_uv_from_github() {
-  local version="$UV_INSTALL_VERSION"
-  local arch machine
-  machine="$(uname -m)"
-  case "$machine" in
-    x86_64|amd64)   arch="x86_64-unknown-linux-gnu" ;;
-    aarch64|arm64)  arch="aarch64-unknown-linux-gnu" ;;
-    *)
-      log "ERROR: Unsupported architecture for uv installation: $machine"
-      log "ERROR: Install uv manually from https://github.com/astral-sh/uv/releases and set COBIEN_BOOTSTRAP_UV_BIN"
-      return 1
-      ;;
-  esac
-
-  local base_url="https://github.com/astral-sh/uv/releases/download/${version}"
-  local archive="uv-${arch}.tar.gz"
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  local archive_path="$tmp_dir/$archive"
-  local sha256_path="$tmp_dir/${archive}.sha256"
-
-  log "Downloading uv ${version} for ${arch}"
-  if ! curl -fsSL "${base_url}/${archive}" -o "$archive_path"; then
-    log "ERROR: Failed to download uv archive"
-    rm -rf "$tmp_dir"
-    return 1
-  fi
-  if ! curl -fsSL "${base_url}/${archive}.sha256" -o "$sha256_path"; then
-    log "ERROR: Failed to download uv checksum"
-    rm -rf "$tmp_dir"
-    return 1
-  fi
-
-  # sha256sum --check expects "hash  filename" in the same dir
-  local expected_hash actual_hash
-  expected_hash="$(awk '{print $1}' "$sha256_path")"
-  actual_hash="$(sha256sum "$archive_path" | awk '{print $1}')"
-  if [[ "$actual_hash" != "$expected_hash" ]]; then
-    log "ERROR: uv archive SHA256 mismatch (expected=$expected_hash got=$actual_hash) — aborting install"
-    rm -rf "$tmp_dir"
-    return 1
-  fi
-  log "uv archive SHA256 verified: $actual_hash"
-
-  if ! tar -xzf "$archive_path" -C "$tmp_dir" >/dev/null 2>&1; then
-    log "ERROR: Failed to extract uv archive"
-    rm -rf "$tmp_dir"
-    return 1
-  fi
-
-  local uv_bin
-  uv_bin="$(find "$tmp_dir" -type f -name uv -perm /111 | head -n1)"
-  if [[ -z "$uv_bin" ]]; then
-    log "ERROR: uv binary not found in archive"
-    rm -rf "$tmp_dir"
-    return 1
-  fi
-
+  log "Installing uv via official installer (https://astral.sh/uv/install.sh)"
   mkdir -p "$HOME/.local/bin"
-  mv -f "$uv_bin" "$HOME/.local/bin/uv"
-  chmod +x "$HOME/.local/bin/uv"
-  rm -rf "$tmp_dir"
-  log "uv ${version} installed at $HOME/.local/bin/uv"
+  # UV_INSTALL_DIR tells the installer where to put the binary
+  if UV_INSTALL_DIR="$HOME/.local/bin" curl -LsSf https://astral.sh/uv/install.sh | sh; then
+    log "uv installed at $HOME/.local/bin/uv"
+    return 0
+  fi
+  log "ERROR: uv installer failed"
+  return 1
 }
 
 resolve_uv_bin() {
@@ -2877,7 +2823,7 @@ resolve_uv_bin() {
     return
   fi
 
-  log "uv not found; installing version ${UV_INSTALL_VERSION} from GitHub releases"
+  log "uv not found; installing via official installer"
   if _install_uv_from_github; then
     UV_BIN="$HOME/.local/bin/uv"
   elif command -v uv >/dev/null 2>&1; then
