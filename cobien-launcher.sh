@@ -1347,6 +1347,7 @@ launch_runtime() {
   configure_audio_input_defaults
   resolve_python_bin
   resolve_uv_bin
+  _heal_venv_permissions
   mkdir -p "$LOG_DIR"
   animate_status "Starting runtime services"
   ensure_mosquitto_running
@@ -2866,6 +2867,27 @@ resolve_uv_bin() {
   fi
 }
 
+_heal_venv_permissions() {
+  # Remove a venv that exists but is not readable/executable by the current user.
+  # This happens when a previous setup run was accidentally executed as root.
+  if [[ ! -d "$VENV_DIR" ]]; then return; fi
+  if [[ -x "$VENV_DIR/bin/python3" ]]; then return; fi
+
+  log "WARN: $VENV_DIR exists but is not accessible (wrong ownership). Attempting repair..."
+  # Try unprivileged chown first (works if the user is the filesystem owner)
+  chown -R "$(id -un):" "$VENV_DIR" 2>/dev/null && return
+
+  # Try to remove it so it gets recreated cleanly
+  rm -rf "$VENV_DIR" 2>/dev/null && { log "Removed inaccessible venv; it will be recreated."; return; }
+
+  # Last resort: sudo remove (requires NOPASSWD entry for rm, unlikely but worth trying)
+  if can_perform_privileged_installs; then
+    sudo rm -rf "$VENV_DIR" 2>/dev/null && { log "Removed inaccessible venv via sudo; it will be recreated."; return; }
+  fi
+
+  log "ERROR: Cannot remove $VENV_DIR — run: sudo rm -rf $VENV_DIR"
+}
+
 prepare_venv() {
   resolve_python_bin
   resolve_uv_bin
@@ -2873,6 +2895,8 @@ prepare_venv() {
   log_phase_banner "Python and virtualenv" "The requested interpreter is always provisioned through uv, and the furniture venv is rebuilt from there."
   animate_status "Ensuring Python ${PYTHON_REQUEST} with uv"
   "$UV_BIN" python install "$PYTHON_REQUEST"
+
+  _heal_venv_permissions
 
   if [[ "$RECREATE_VENV" == "1" && -d "$VENV_DIR" ]]; then
     log "Removing previous virtual environment: $VENV_DIR"

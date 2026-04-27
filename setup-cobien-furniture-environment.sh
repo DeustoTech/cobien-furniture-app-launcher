@@ -1402,6 +1402,10 @@ EOF
 }
 
 fix_target_runtime_ownership() {
+    # The launcher runs as root with HOME="$TARGET_HOME" so uv, pip and other
+    # tools create files under the target user's home owned by root.  Fix all
+    # known locations in one pass.  Using broad subtrees (e.g. .local/share/uv)
+    # rather than individual files so newly created sub-paths are covered too.
     local path
     for path in \
         "$PROJECT_DIR" \
@@ -1414,7 +1418,8 @@ fix_target_runtime_ownership() {
         "$USER_HOME/.local/bin" \
         "$USER_HOME/.local/state/cobien" \
         "$USER_HOME/.local/share/cobien" \
-        "$USER_HOME/.local/bin/uv"
+        "$USER_HOME/.local/share/uv" \
+        "$USER_HOME/.local/share/python-build-standalone"
     do
         [[ -e "$path" || -L "$path" ]] || continue
         chown -R "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true
