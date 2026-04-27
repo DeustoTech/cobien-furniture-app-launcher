@@ -1116,19 +1116,19 @@ apply_touch_rotation() {
             ;;
     esac
 
-    touch_ids="$(
+    touch_ids="\$(
         xinput list 2>/dev/null \
-            | awk -F'id=' '/Finger touch|Touchscreen|touchscreen/ {split($2, a, /[[:space:]]+/); print a[1]}'
+            | awk -F'id=' '/Finger touch|Touchscreen|touchscreen/ {split(\$2, a, /[[:space:]]+/); print a[1]}'
     )"
 
-    if [ -z "$touch_ids" ]; then
+    if [ -z "\$touch_ids" ]; then
         return 0
     fi
 
-    printf '%s\n' "$touch_ids" | while IFS= read -r touch_id; do
-        [ -n "$touch_id" ] || continue
-        xinput set-prop "$touch_id" 'Coordinate Transformation Matrix' $matrix >>/tmp/cobien-touchscreen.log 2>&1 || true
-        xinput map-to-output "$touch_id" "${DISPLAY_OUTPUT}" >>/tmp/cobien-touchscreen.log 2>&1 || true
+    printf '%s\n' "\$touch_ids" | while IFS= read -r touch_id; do
+        [ -n "\$touch_id" ] || continue
+        xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' \$matrix >>/tmp/cobien-touchscreen.log 2>&1 || true
+        xinput map-to-output "\$touch_id" "${DISPLAY_OUTPUT}" >>/tmp/cobien-touchscreen.log 2>&1 || true
     done
 }
 
