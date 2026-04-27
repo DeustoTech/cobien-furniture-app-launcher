@@ -1093,8 +1093,49 @@ write_openbox_autostart() {
     cat > "$USER_HOME/.config/openbox/autostart" <<EOF
 #!/usr/bin/env bash
 
+apply_touch_rotation() {
+    local matrix
+    local touch_ids
+
+    if ! command -v xinput >/dev/null 2>&1; then
+        return 0
+    fi
+
+    case "${DISPLAY_ROTATION}" in
+        left)
+            matrix="0 -1 1 1 0 0 0 0 1"
+            ;;
+        right)
+            matrix="0 1 0 -1 0 1 0 0 1"
+            ;;
+        inverted)
+            matrix="-1 0 1 0 -1 1 0 0 1"
+            ;;
+        *)
+            matrix="1 0 0 0 1 0 0 0 1"
+            ;;
+    esac
+
+    touch_ids="$(
+        xinput list 2>/dev/null \
+            | awk -F'id=' '/Finger touch|Touchscreen|touchscreen/ {split($2, a, /[[:space:]]+/); print a[1]}'
+    )"
+
+    if [ -z "$touch_ids" ]; then
+        return 0
+    fi
+
+    printf '%s\n' "$touch_ids" | while IFS= read -r touch_id; do
+        [ -n "$touch_id" ] || continue
+        xinput set-prop "$touch_id" 'Coordinate Transformation Matrix' $matrix >>/tmp/cobien-touchscreen.log 2>&1 || true
+        xinput map-to-output "$touch_id" "${DISPLAY_OUTPUT}" >>/tmp/cobien-touchscreen.log 2>&1 || true
+    done
+}
+
 sleep 2
 xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >/dev/null 2>&1 || true
+sleep 1
+apply_touch_rotation
 
 if [ "${DISABLE_SYSTEM_SLEEP}" = "1" ] && command -v xset >/dev/null 2>&1; then
   xset s off >/tmp/cobien-xset.log 2>&1 || true
