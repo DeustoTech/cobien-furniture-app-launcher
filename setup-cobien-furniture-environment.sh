@@ -1405,6 +1405,9 @@ fix_target_runtime_ownership() {
     local path
     for path in \
         "$PROJECT_DIR" \
+        "$PROJECT_DIR/$FRONTEND_REPO_NAME" \
+        "$PROJECT_DIR/$FRONTEND_REPO_NAME/app" \
+        "$PROJECT_DIR/$FRONTEND_REPO_NAME/app/.venv" \
         "$USER_HOME/.config/cobien" \
         "$USER_HOME/.cache/cobien" \
         "$USER_HOME/.cache/uv" \
