@@ -1637,6 +1637,18 @@ checkout_branch() {
 }
 
 apt_get_locked() {
+  # DPkg::Lock::Timeout covers /var/lib/dpkg/lock* but NOT /var/lib/apt/lists/lock.
+  # Wait for the lists lock separately before calling apt-get.
+  local waited=0
+  while ! sudo flock -n /var/lib/apt/lists/lock true 2>/dev/null; do
+    if [[ $waited -ge 300 ]]; then
+      log "APT: Timed out waiting for apt lists lock after 300s — proceeding anyway"
+      break
+    fi
+    [[ $waited -eq 0 ]] && log "APT: Waiting for apt lists lock to be released..."
+    sleep 5
+    waited=$((waited + 5))
+  done
   sudo apt-get -o DPkg::Lock::Timeout=120 "$@"
 }
 
@@ -1657,6 +1669,7 @@ install_system_deps_fn() {
     libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0
     libxcomposite1 libxdamage1 libxrandr2 libnss3
     libatk-bridge2.0-0 libgtk-3-0
+    dunst libnotify-bin xbindkeys
   )
   local missing_packages=()
   local package_name
@@ -2443,6 +2456,171 @@ PY
   log "Device identity synced: language='$APP_LANGUAGE', device_id='$DEVICE_ID', videocall_room='$VIDEOCALL_ROOM', videocall_key='configured', location='$DEVICE_LOCATION', tts_engine='$TTS_ENGINE'"
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Kiosk volume OSD (xbindkeys + dunst + wpctl)
+# ─────────────────────────────────────────────────────────────────────────────
+
+setup_kiosk_volume() {
+  log "Setting up kiosk volume OSD (xbindkeys + dunst + wpctl)..."
+
+  local bin_dir="$HOME/.local/bin"
+  local openbox_dir="$HOME/.config/openbox"
+  local dunst_dir="$HOME/.config/dunst"
+  mkdir -p "$bin_dir" "$openbox_dir" "$dunst_dir"
+
+  # ── volume-up.sh ──────────────────────────────────────────────────────────
+  cat > "$bin_dir/volume-up.sh" << 'VOLUP'
+#!/usr/bin/env bash
+wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+
+raw=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)
+if echo "$raw" | grep -qi "MUTED"; then
+  notify-send "Volume" "Muted" \
+    -h int:value:0 \
+    -h string:x-dunst-stack-tag:volume \
+    -t 1000
+else
+  vol=$(echo "$raw" | awk '{printf "%d", $2 * 100}')
+  notify-send "Volume" "${vol}%" \
+    -h int:value:"$vol" \
+    -h string:x-dunst-stack-tag:volume \
+    -t 1000
+fi
+VOLUP
+
+  # ── volume-down.sh ────────────────────────────────────────────────────────
+  cat > "$bin_dir/volume-down.sh" << 'VOLDN'
+#!/usr/bin/env bash
+wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+raw=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)
+if echo "$raw" | grep -qi "MUTED"; then
+  notify-send "Volume" "Muted" \
+    -h int:value:0 \
+    -h string:x-dunst-stack-tag:volume \
+    -t 1000
+else
+  vol=$(echo "$raw" | awk '{printf "%d", $2 * 100}')
+  notify-send "Volume" "${vol}%" \
+    -h int:value:"$vol" \
+    -h string:x-dunst-stack-tag:volume \
+    -t 1000
+fi
+VOLDN
+
+  # ── volume-mute.sh ────────────────────────────────────────────────────────
+  cat > "$bin_dir/volume-mute.sh" << 'VOLMUTE'
+#!/usr/bin/env bash
+wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+raw=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)
+if echo "$raw" | grep -qi "MUTED"; then
+  notify-send "Volume" "Muted" \
+    -h int:value:0 \
+    -h string:x-dunst-stack-tag:volume \
+    -t 1000
+else
+  vol=$(echo "$raw" | awk '{printf "%d", $2 * 100}')
+  notify-send "Volume" "${vol}%" \
+    -h int:value:"$vol" \
+    -h string:x-dunst-stack-tag:volume \
+    -t 1000
+fi
+VOLMUTE
+
+  chmod +x "$bin_dir/volume-up.sh" "$bin_dir/volume-down.sh" "$bin_dir/volume-mute.sh"
+
+  # ── xbindkeys config ──────────────────────────────────────────────────────
+  local xbindkeysrc="$HOME/.xbindkeysrc"
+  if [[ -f "$xbindkeysrc" ]] && grep -q "volume-up.sh" "$xbindkeysrc"; then
+    log "xbindkeys: volume bindings already present in $xbindkeysrc"
+  else
+    cat >> "$xbindkeysrc" << XBINDKEYS
+
+# CoBien hardware volume knob
+"$bin_dir/volume-up.sh"
+  XF86AudioRaiseVolume
+
+"$bin_dir/volume-down.sh"
+  XF86AudioLowerVolume
+
+"$bin_dir/volume-mute.sh"
+  XF86AudioMute
+XBINDKEYS
+    log "xbindkeys: volume bindings written to $xbindkeysrc"
+  fi
+
+  # ── dunst config (progress bar + OSD style) ───────────────────────────────
+  local dunstrc="$dunst_dir/dunstrc"
+  if [[ ! -f "$dunstrc" ]]; then
+    cat > "$dunstrc" << 'DUNSTRC'
+[global]
+    monitor = 0
+    follow = none
+    width = 300
+    height = 80
+    origin = top-center
+    offset = 0x50
+    scale = 0
+    notification_limit = 1
+    progress_bar = true
+    progress_bar_height = 14
+    progress_bar_frame_width = 1
+    progress_bar_min_width = 260
+    progress_bar_max_width = 300
+    indicate_hidden = no
+    transparency = 10
+    separator_height = 0
+    padding = 12
+    horizontal_padding = 12
+    text_icon_padding = 0
+    frame_width = 2
+    frame_color = "#4a90d9"
+    corner_radius = 6
+    sort = no
+    font = Monospace 16
+    line_height = 0
+    markup = full
+    format = "<b>%s</b>\n%b"
+    alignment = center
+    show_age_threshold = -1
+    stack_duplicates = true
+    hide_duplicate_count = true
+    show_indicators = no
+    enable_posix_regex = true
+    mouse_left_click = close_current
+    mouse_middle_click = close_all
+    mouse_right_click = close_current
+
+[urgency_low]
+    background = "#1e1e2e"
+    foreground = "#cdd6f4"
+    timeout = 1
+
+[urgency_normal]
+    background = "#1e1e2e"
+    foreground = "#cdd6f4"
+    timeout = 1
+
+[urgency_critical]
+    background = "#f38ba8"
+    foreground = "#1e1e2e"
+    timeout = 5
+DUNSTRC
+    log "dunst: config written to $dunstrc"
+  else
+    log "dunst: existing config preserved at $dunstrc"
+  fi
+
+  # ── Openbox autostart ─────────────────────────────────────────────────────
+  local autostart="$openbox_dir/autostart"
+  for entry in "dunst" "xbindkeys"; do
+    if ! grep -q "^$entry" "$autostart" 2>/dev/null; then
+      echo "$entry &" >> "$autostart"
+      log "openbox autostart: added $entry"
+    fi
+  done
+
+  log "Kiosk volume OSD setup complete."
+}
+
 configure_audio_input_defaults() {
   local unified_config_file
   unified_config_file="$LOCAL_CONFIG_PATH"
@@ -2838,6 +3016,7 @@ setup_environment() {
   configure_tts_runtime
   animate_status "Writing runtime env and config.local.json"
   write_env_file
+  setup_kiosk_volume
 }
 
 check_repo() {
