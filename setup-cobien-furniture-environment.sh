@@ -1408,6 +1408,7 @@ fix_target_runtime_ownership() {
         "$USER_HOME/.config/cobien" \
         "$USER_HOME/.cache/cobien" \
         "$USER_HOME/.cache/uv" \
+        "$USER_HOME/.local/bin" \
         "$USER_HOME/.local/state/cobien" \
         "$USER_HOME/.local/share/cobien" \
         "$USER_HOME/.local/bin/uv"
