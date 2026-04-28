@@ -1163,7 +1163,7 @@ EOF
     XF86AudioMute
 EOF
 
-    cat > "$USER_HOME/.config/openbox/autostart" <<EOF
+    cat > "$USER_HOME/.config/cobien/openbox-session.sh" <<EOF
 #!/usr/bin/env bash
 
     resolve_display_output() {
@@ -1299,9 +1299,19 @@ if command -v xbindkeys >/dev/null 2>&1; then
 fi
 EOF
 
+    cat > "$USER_HOME/.config/openbox/autostart" <<'EOF'
+#!/bin/sh
+
+echo "[openbox-autostart] launching CoBien session helper $(date)" >> /tmp/openbox-autostart.log
+if [ -x "$HOME/.config/cobien/openbox-session.sh" ]; then
+    "$HOME/.config/cobien/openbox-session.sh" >> /tmp/openbox-session.log 2>&1 &
+fi
+EOF
+
+    chmod +x "$USER_HOME/.config/cobien/openbox-session.sh"
     chmod +x "$USER_HOME/.config/openbox/autostart"
-        chmod +x "$USER_HOME/.config/cobien/volume-osd.sh"
-        chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.xbindkeysrc"
+    chmod +x "$USER_HOME/.config/cobien/volume-osd.sh"
+    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.xbindkeysrc"
 }
 
 configure_kiosk_power_management() {
