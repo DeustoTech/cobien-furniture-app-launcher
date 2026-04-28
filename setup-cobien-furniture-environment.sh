@@ -1166,6 +1166,11 @@ EOF
     cat > "$USER_HOME/.config/openbox/autostart" <<EOF
 #!/usr/bin/env bash
 
+    apply_display_rotation() {
+        echo "[apply_display_rotation] Applying output=${DISPLAY_OUTPUT} mode=${DISPLAY_MODE} rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-display.log
+        xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >>/tmp/cobien-display.log 2>&1 || true
+    }
+
 apply_touch_rotation() {
     local matrix
     local touch_ids
@@ -1209,10 +1214,17 @@ apply_touch_rotation() {
 }
 
 sleep 2
-xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >/dev/null 2>&1 || true
+apply_display_rotation
 sleep 1
 apply_touch_rotation
-( sleep 3; apply_touch_rotation ) >>/tmp/cobien-touchscreen.log 2>&1 &
+(
+    sleep 3
+    apply_display_rotation
+    apply_touch_rotation
+    sleep 5
+    apply_display_rotation
+    apply_touch_rotation
+) >/tmp/cobien-touchscreen.log 2>&1 &
 
 if [ "${DISABLE_SYSTEM_SLEEP}" = "1" ] && command -v xset >/dev/null 2>&1; then
   xset s off >/tmp/cobien-xset.log 2>&1 || true
