@@ -1166,18 +1166,68 @@ EOF
     cat > "$USER_HOME/.config/openbox/autostart" <<EOF
 #!/usr/bin/env bash
 
+    resolve_display_output() {
+        local configured_output="${DISPLAY_OUTPUT}"
+        local connected_outputs fallback_output
+
+        connected_outputs="\$({ xrandr --query 2>/dev/null || true; } | awk '\$2 == "connected" {print \$1}')"
+        if printf '%s\n' "\$connected_outputs" | grep -Fxq "\$configured_output"; then
+            printf '%s\n' "\$configured_output"
+            return 0
+        fi
+
+        fallback_output="\$(printf '%s\n' "\$connected_outputs" | awk '/^(eDP|LVDS|DSI)-/ {print; exit}')"
+        if [ -z "\$fallback_output" ]; then
+            fallback_output="\$(printf '%s\n' "\$connected_outputs" | head -n1)"
+        fi
+        printf '%s\n' "\${fallback_output:-\$configured_output}"
+    }
+
+    is_display_rotation_applied() {
+        local display_output="\$1"
+        local output_line
+        output_line="\$(xrandr --query 2>/dev/null | awk -v out="\$display_output" '\$1 == out && \$2 == "connected" {print; exit}')"
+        case " \$output_line " in
+            *" ${DISPLAY_ROTATION} "*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
     apply_display_rotation() {
-        echo "[apply_display_rotation] Applying output=${DISPLAY_OUTPUT} mode=${DISPLAY_MODE} rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-display.log
-        xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >>/tmp/cobien-display.log 2>&1 || true
+        local display_output attempt
+        display_output="\$(resolve_display_output)"
+        echo "[apply_display_rotation] Configured=${DISPLAY_OUTPUT} resolved=\$display_output mode=${DISPLAY_MODE} rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-display.log
+        if [ -z "\$display_output" ]; then
+            echo "[apply_display_rotation] No connected output detected via xrandr" >>/tmp/cobien-display.log
+            return 0
+        fi
+
+        for attempt in 1 2 3; do
+            xrandr --output "\$display_output" --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >>/tmp/cobien-display.log 2>&1 || true
+            if is_display_rotation_applied "\$display_output"; then
+                echo "[apply_display_rotation] Rotation applied on attempt \$attempt" >>/tmp/cobien-display.log
+                return 0
+            fi
+            sleep 1
+        done
+
+        echo "[apply_display_rotation] Rotation still not applied after retries" >>/tmp/cobien-display.log
     }
 
 apply_touch_rotation() {
     local matrix
     local touch_ids
+        local display_output
 
     if ! command -v xinput >/dev/null 2>&1; then
         return 0
     fi
+
+        display_output="\$(resolve_display_output)"
+        if [ -z "\$display_output" ]; then
+            echo "[apply_touch_rotation] No output available for touchscreen mapping" >>/tmp/cobien-touchscreen.log
+            return 0
+        fi
 
     case "${DISPLAY_ROTATION}" in
         left)
@@ -1206,8 +1256,8 @@ apply_touch_rotation() {
 
     printf '%s\n' "\$touch_ids" | while IFS= read -r touch_id; do
         [ -n "\$touch_id" ] || continue
-        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=${DISPLAY_OUTPUT} rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-touchscreen.log
-        xinput map-to-output "\$touch_id" "${DISPLAY_OUTPUT}" >>/tmp/cobien-touchscreen.log 2>&1 || true
+        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=\$display_output rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-touchscreen.log
+        xinput map-to-output "\$touch_id" "\$display_output" >>/tmp/cobien-touchscreen.log 2>&1 || true
         read -ra mat_arr <<< "\$matrix"
         xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' "\${mat_arr[@]}" >>/tmp/cobien-touchscreen.log 2>&1 || true
     done
