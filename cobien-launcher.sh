@@ -1674,6 +1674,7 @@ install_system_deps_fn() {
     libxcomposite1 libxdamage1 libxrandr2 libnss3
     libatk-bridge2.0-0 libgtk-3-0
     dunst libnotify-bin xbindkeys
+    x11-xserver-utils xinput
   )
   local missing_packages=()
   local package_name
@@ -1717,6 +1718,8 @@ ensure_runtime_dependencies() {
   command -v xsel >/dev/null 2>&1 || append_missing_apt_package "xsel" missing_packages
   command -v aplay >/dev/null 2>&1 || append_missing_apt_package "alsa-utils" missing_packages
   command -v pactl >/dev/null 2>&1 || append_missing_apt_package "pulseaudio-utils" missing_packages
+  command -v xinput >/dev/null 2>&1 || append_missing_apt_package "xinput" missing_packages
+  command -v xrandr >/dev/null 2>&1 || append_missing_apt_package "x11-xserver-utils" missing_packages
   append_missing_apt_package "pipewire-pulse" missing_packages
   append_missing_apt_package "wireplumber" missing_packages
   command -v mosquitto >/dev/null 2>&1 || {

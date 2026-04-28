@@ -95,6 +95,7 @@ BOOTSTRAP_APT_PACKAGES=(
     tint2
     xterm
     x11-xserver-utils
+    xinput
     wmctrl
     pipewire
     wireplumber
@@ -1190,17 +1191,20 @@ apply_touch_rotation() {
 
     touch_ids="\$(
         xinput list 2>/dev/null \
-            | awk -F'id=' '/Finger touch|Touchscreen|touchscreen/ {split(\$2, a, /[[:space:]]+/); print a[1]}'
+            | awk -F'id=' '/[Tt]ouch/ {split(\$2, a, /[[:space:]]+/); print a[1]}'
     )"
 
     if [ -z "\$touch_ids" ]; then
+        echo "[apply_touch_rotation] No touchscreen device found via xinput" >>/tmp/cobien-touchscreen.log
         return 0
     fi
 
     printf '%s\n' "\$touch_ids" | while IFS= read -r touch_id; do
         [ -n "\$touch_id" ] || continue
+        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=${DISPLAY_OUTPUT} rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-touchscreen.log
         xinput map-to-output "\$touch_id" "${DISPLAY_OUTPUT}" >>/tmp/cobien-touchscreen.log 2>&1 || true
-        xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' \$matrix >>/tmp/cobien-touchscreen.log 2>&1 || true
+        read -ra mat_arr <<< "\$matrix"
+        xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' "\${mat_arr[@]}" >>/tmp/cobien-touchscreen.log 2>&1 || true
     done
 }
 
@@ -1208,7 +1212,7 @@ sleep 2
 xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >/dev/null 2>&1 || true
 sleep 1
 apply_touch_rotation
-( sleep 3; apply_touch_rotation ) >/tmp/cobien-touchscreen.log 2>&1 &
+( sleep 3; apply_touch_rotation ) >>/tmp/cobien-touchscreen.log 2>&1 &
 
 if [ "${DISABLE_SYSTEM_SLEEP}" = "1" ] && command -v xset >/dev/null 2>&1; then
   xset s off >/tmp/cobien-xset.log 2>&1 || true
