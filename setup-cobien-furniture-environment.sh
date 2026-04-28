@@ -90,14 +90,17 @@ BOOTSTRAP_APT_PACKAGES=(
     curl
     openbox
     lightdm
+    dunst
     xbindkeys
     libnotify-bin
+    pulseaudio-utils
     tint2
     xterm
     x11-xserver-utils
     xinput
     wmctrl
     pipewire
+    pipewire-pulse
     wireplumber
 )
 
@@ -1093,6 +1096,62 @@ ensure_repo() {
 write_openbox_autostart() {
     mkdir -p "$USER_HOME/.config/openbox"
     mkdir -p "$USER_HOME/.config/cobien"
+    mkdir -p "$USER_HOME/.config/dunst"
+
+    cat > "$USER_HOME/.config/dunst/dunstrc" <<'EOF'
+[global]
+    monitor = 0
+    follow = none
+    width = 300
+    height = 80
+    origin = top-center
+    offset = 0x50
+    scale = 0
+    notification_limit = 1
+    progress_bar = true
+    progress_bar_height = 14
+    progress_bar_frame_width = 1
+    progress_bar_min_width = 260
+    progress_bar_max_width = 300
+    indicate_hidden = no
+    transparency = 10
+    separator_height = 0
+    padding = 12
+    horizontal_padding = 12
+    text_icon_padding = 0
+    frame_width = 2
+    frame_color = "#4a90d9"
+    corner_radius = 6
+    sort = no
+    font = Monospace 16
+    line_height = 0
+    markup = full
+    format = "<b>%s</b>\n%b"
+    alignment = center
+    show_age_threshold = -1
+    stack_duplicates = true
+    hide_duplicate_count = true
+    show_indicators = no
+    enable_posix_regex = true
+    mouse_left_click = close_current
+    mouse_middle_click = close_all
+    mouse_right_click = close_current
+
+[urgency_low]
+    background = "#1e1e2e"
+    foreground = "#cdd6f4"
+    timeout = 1
+
+[urgency_normal]
+    background = "#1e1e2e"
+    foreground = "#cdd6f4"
+    timeout = 1
+
+[urgency_critical]
+    background = "#f38ba8"
+    foreground = "#1e1e2e"
+    timeout = 5
+EOF
 
     cat > "$USER_HOME/.config/cobien/volume-osd.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -1101,51 +1160,105 @@ set -u
 step="${1:-5%}"
 direction="${2:-up}"
 
-if ! command -v pactl >/dev/null 2>&1; then
-    exit 0
-fi
+volume_value=0
+icon="audio-volume-high"
+body="Unknown"
+label="Volume"
 
-default_sink="$(pactl get-default-sink 2>/dev/null || true)"
-if [ -z "$default_sink" ]; then
-    exit 0
-fi
+apply_with_wpctl() {
+    local raw vol
 
-case "$direction" in
-    up)
-        pactl set-sink-volume "$default_sink" "+${step}" >/dev/null 2>&1 || exit 0
-        icon="audio-volume-high"
-        label="Volume up"
-        ;;
-    down)
-        pactl set-sink-volume "$default_sink" "-${step}" >/dev/null 2>&1 || exit 0
-        icon="audio-volume-low"
-        label="Volume down"
-        ;;
-    mute)
-        pactl set-sink-mute "$default_sink" toggle >/dev/null 2>&1 || exit 0
+    case "$direction" in
+        up)
+            wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ "+${step}" >/dev/null 2>&1 || exit 0
+            icon="audio-volume-high"
+            label="Volume up"
+            ;;
+        down)
+            wpctl set-volume @DEFAULT_AUDIO_SINK@ "-${step}" >/dev/null 2>&1 || exit 0
+            icon="audio-volume-low"
+            label="Volume down"
+            ;;
+        mute)
+            wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle >/dev/null 2>&1 || exit 0
+            icon="audio-volume-muted"
+            label="Mute"
+            ;;
+        *)
+            exit 0
+            ;;
+    esac
+
+    raw="$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null || true)"
+    if printf '%s\n' "$raw" | grep -qi "MUTED"; then
         icon="audio-volume-muted"
-        label="Mute"
-        ;;
-    *)
+        body="Muted"
+        volume_value=0
+        return 0
+    fi
+
+    vol="$(printf '%s\n' "$raw" | awk '{printf "%d", $2 * 100}')"
+    volume_value="${vol:-0}"
+    body="${volume_value}%"
+}
+
+apply_with_pactl() {
+    local default_sink volume_line mute_state
+
+    default_sink="$(pactl get-default-sink 2>/dev/null || true)"
+    if [ -z "$default_sink" ]; then
         exit 0
-        ;;
-esac
+    fi
 
-volume_line="$(pactl get-sink-volume "$default_sink" 2>/dev/null | sed -n 's/.*\/ *\([0-9]\+%\).*/\1/p' | head -n1)"
-mute_state="$(pactl get-sink-mute "$default_sink" 2>/dev/null | awk '{print $2}')"
+    case "$direction" in
+        up)
+            pactl set-sink-volume "$default_sink" "+${step}" >/dev/null 2>&1 || exit 0
+            icon="audio-volume-high"
+            label="Volume up"
+            ;;
+        down)
+            pactl set-sink-volume "$default_sink" "-${step}" >/dev/null 2>&1 || exit 0
+            icon="audio-volume-low"
+            label="Volume down"
+            ;;
+        mute)
+            pactl set-sink-mute "$default_sink" toggle >/dev/null 2>&1 || exit 0
+            icon="audio-volume-muted"
+            label="Mute"
+            ;;
+        *)
+            exit 0
+            ;;
+    esac
 
-if [ "$mute_state" = "yes" ]; then
-    icon="audio-volume-muted"
-    body="Muted"
-else
+    volume_line="$(pactl get-sink-volume "$default_sink" 2>/dev/null | sed -n 's/.*\/ *\([0-9]\+%\).*/\1/p' | head -n1)"
+    mute_state="$(pactl get-sink-mute "$default_sink" 2>/dev/null | awk '{print $2}')"
+
+    if [ "$mute_state" = "yes" ]; then
+        icon="audio-volume-muted"
+        body="Muted"
+        volume_value=0
+        return 0
+    fi
+
+    volume_value="${volume_line%%%}"
     body="${volume_line:-Unknown}"
+}
+
+if command -v wpctl >/dev/null 2>&1; then
+    apply_with_wpctl
+elif command -v pactl >/dev/null 2>&1; then
+    apply_with_pactl
+else
+    exit 0
 fi
 
 if command -v notify-send >/dev/null 2>&1; then
     notify-send \
         --app-name="CoBien" \
         --expire-time=900 \
-        --hint=int:value:"${volume_line%%%}" \
+        --hint=int:value:"${volume_value:-0}" \
+        --hint=string:x-dunst-stack-tag:volume \
         --icon="$icon" \
         "$label" \
         "$body" >/dev/null 2>&1 || true
@@ -1293,6 +1406,11 @@ if [ "${INSTALL_RUSTDESK}" = "1" ] && [ -x "/usr/bin/rustdesk" ]; then
   pgrep -u "${USER_NAME}" -x rustdesk >/dev/null || /usr/bin/rustdesk ${RUSTDESK_ARGS} >/tmp/cobien-rustdesk.log 2>&1 &
 fi
 
+if command -v dunst >/dev/null 2>&1; then
+        pkill -u "${USER_NAME}" -x dunst >/dev/null 2>&1 || true
+        dunst >/tmp/cobien-dunst.log 2>&1 &
+fi
+
 if command -v xbindkeys >/dev/null 2>&1; then
     pkill -u "${USER_NAME}" -x xbindkeys >/dev/null 2>&1 || true
     xbindkeys >/tmp/cobien-xbindkeys.log 2>&1 &
@@ -1311,7 +1429,7 @@ EOF
     chmod +x "$USER_HOME/.config/cobien/openbox-session.sh"
     chmod +x "$USER_HOME/.config/openbox/autostart"
     chmod +x "$USER_HOME/.config/cobien/volume-osd.sh"
-    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.xbindkeysrc"
+    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.config/dunst" "$USER_HOME/.xbindkeysrc"
 }
 
 configure_kiosk_power_management() {
