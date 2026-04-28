@@ -2534,12 +2534,28 @@ VOLMUTE
 
   # ── xbindkeys config ──────────────────────────────────────────────────────
   local xbindkeysrc="$HOME/.xbindkeysrc"
-  if [[ -f "$xbindkeysrc" ]] && grep -q "volume-up.sh" "$xbindkeysrc"; then
-    log "xbindkeys: volume bindings already present in $xbindkeysrc"
-  else
-    cat >> "$xbindkeysrc" << XBINDKEYS
+  if [[ -f "$xbindkeysrc" ]]; then
+    awk '
+      /# BEGIN CoBien hardware volume knob/ { skip=1; next }
+      /# END CoBien hardware volume knob/ { skip=0; next }
+      skip { next }
+      /# CoBien hardware volume knob/ { next }
+      /volume-osd\.sh|volume-up\.sh|volume-down\.sh|volume-mute\.sh/ {
+        skip_key=1
+        next
+      }
+      skip_key && /^[[:space:]]*XF86Audio(Raise|Lower|Mute)Volume[[:space:]]*$/ {
+        skip_key=0
+        next
+      }
+      { print }
+    ' "$xbindkeysrc" > "$xbindkeysrc.tmp"
+    mv "$xbindkeysrc.tmp" "$xbindkeysrc"
+  fi
 
-# CoBien hardware volume knob
+  cat >> "$xbindkeysrc" << XBINDKEYS
+
+# BEGIN CoBien hardware volume knob
 "$bin_dir/volume-up.sh"
   XF86AudioRaiseVolume
 
@@ -2548,9 +2564,9 @@ VOLMUTE
 
 "$bin_dir/volume-mute.sh"
   XF86AudioMute
+# END CoBien hardware volume knob
 XBINDKEYS
-    log "xbindkeys: volume bindings written to $xbindkeysrc"
-  fi
+  log "xbindkeys: volume bindings refreshed in $xbindkeysrc"
 
   # ── dunst config (progress bar + OSD style) ───────────────────────────────
   local dunstrc="$dunst_dir/dunstrc"

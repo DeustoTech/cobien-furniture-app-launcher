@@ -1199,8 +1199,8 @@ apply_touch_rotation() {
 
     printf '%s\n' "\$touch_ids" | while IFS= read -r touch_id; do
         [ -n "\$touch_id" ] || continue
-        xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' \$matrix >>/tmp/cobien-touchscreen.log 2>&1 || true
         xinput map-to-output "\$touch_id" "${DISPLAY_OUTPUT}" >>/tmp/cobien-touchscreen.log 2>&1 || true
+        xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' \$matrix >>/tmp/cobien-touchscreen.log 2>&1 || true
     done
 }
 
@@ -1208,6 +1208,7 @@ sleep 2
 xrandr --output ${DISPLAY_OUTPUT} --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >/dev/null 2>&1 || true
 sleep 1
 apply_touch_rotation
+( sleep 3; apply_touch_rotation ) >/tmp/cobien-touchscreen.log 2>&1 &
 
 if [ "${DISABLE_SYSTEM_SLEEP}" = "1" ] && command -v xset >/dev/null 2>&1; then
   xset s off >/tmp/cobien-xset.log 2>&1 || true
