@@ -972,6 +972,35 @@ installed_apt_package_version() {
     dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || true
 }
 
+# Wait for any background process holding the dpkg/apt lock to finish.
+# On a freshly booted Ubuntu VM unattended-upgrades often starts immediately
+# and holds the lock for several minutes, causing apt to exit with code 100.
+wait_for_apt_lock() {
+    local max_wait=300
+    local waited=0
+    local interval=5
+
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        if [[ "$waited" -eq 0 ]]; then
+            log INFO "dpkg/apt lock is held by another process (likely unattended-upgrades). Waiting up to ${max_wait}s..."
+        fi
+        if [[ "$waited" -ge "$max_wait" ]]; then
+            log WARN "dpkg lock still held after ${max_wait}s. Attempting to stop unattended-upgrades and proceed..."
+            sudo systemctl stop unattended-upgrades 2>/dev/null || true
+            sudo killall unattended-upgr 2>/dev/null || true
+            sleep 3
+            break
+        fi
+        sleep "$interval"
+        waited=$(( waited + interval ))
+        log INFO "Still waiting for apt lock... ${waited}s / ${max_wait}s"
+    done
+
+    if [[ "$waited" -gt 0 ]]; then
+        log INFO "apt lock released after ${waited}s."
+    fi
+}
+
 install_missing_bootstrap_packages() {
     local missing_packages=()
     local package_name
@@ -992,6 +1021,7 @@ install_missing_bootstrap_packages() {
     fi
 
     log INFO "Missing bootstrap packages: ${missing_packages[*]}"
+    wait_for_apt_lock
     run_cmd "Updating apt metadata" sudo apt update
     run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
 }
@@ -1499,6 +1529,7 @@ install_rustdesk() {
         return 1
     fi
 
+    wait_for_apt_lock
     run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo apt install -y "$deb_path"
     rm -rf "$tmp_dir"
 
