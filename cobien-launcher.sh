@@ -1814,19 +1814,31 @@ checkout_branch() {
 }
 
 apt_get_locked() {
-  # DPkg::Lock::Timeout covers /var/lib/dpkg/lock* but NOT /var/lib/apt/lists/lock.
-  # Wait for the lists lock separately before calling apt-get.
+  # apt-get uses POSIX (fcntl) locks on /var/lib/apt/lists/lock, which are
+  # independent of BSD flock. A flock -n test always succeeds even while
+  # apt-get is running. We therefore wait for the process to finish instead,
+  # and retry the apt-get call when it still exits with 100 (lock race).
   local waited=0
-  while ! sudo flock -n /var/lib/apt/lists/lock true 2>/dev/null; do
+  while pgrep -xE "apt-get|dpkg|apt|unattended-upgrade|unattended-upgr" >/dev/null 2>&1; do
     if [[ $waited -ge 300 ]]; then
-      log "APT: Timed out waiting for apt lists lock after 300s — proceeding anyway"
+      log "APT: Timed out waiting for apt/dpkg process after 300s — proceeding anyway"
       break
     fi
-    [[ $waited -eq 0 ]] && log "APT: Waiting for apt lists lock to be released..."
+    [[ $waited -eq 0 ]] && log "APT: Waiting for apt/dpkg process to release locks..."
     sleep 5
     waited=$((waited + 5))
   done
-  sudo apt-get -o DPkg::Lock::Timeout=120 "$@"
+  local attempt=0 exit_code=0
+  while (( attempt < 12 )); do
+    exit_code=0
+    sudo apt-get -o DPkg::Lock::Timeout=120 "$@" || exit_code=$?
+    [[ $exit_code -eq 0 ]] && return 0
+    [[ $exit_code -ne 100 ]] && return $exit_code
+    attempt=$(( attempt + 1 ))
+    log "APT: Lock still held after process check (attempt ${attempt}/12), retrying in 10s..."
+    sleep 10
+  done
+  return $exit_code
 }
 
 install_system_deps_fn() {
