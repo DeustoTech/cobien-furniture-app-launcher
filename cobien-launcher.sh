@@ -995,6 +995,8 @@ resolve_paths() {
   LAUNCHER_STOP_REQUEST_FILE="$RUNTIME_STATE_DIR/launcher_stop_requested.flag"
   MANUAL_UPDATE_RELOAD_FILE="$RUNTIME_STATE_DIR/manual_update_reload.flag"
   CRASH_COUNT_FILE="$RUNTIME_STATE_DIR/crash_count"
+  BRIDGE_CRASH_COUNT_FILE="$RUNTIME_STATE_DIR/bridge_crash_count"
+  BRIDGE_LAST_LAUNCH_TS_FILE="$RUNTIME_STATE_DIR/bridge_last_launch_ts"
   LAST_LAUNCH_TS_FILE="$RUNTIME_STATE_DIR/last_launch_ts"
 }
 
@@ -1381,6 +1383,7 @@ launch_runtime() {
 
   if should_enable_hardware_runtime; then
     runtime_launch_background "mqtt-can-bridge" "$(runtime_bridge_command)"
+    _record_bridge_launch_ts || true
     wait_for_bridge 30 || true
   fi
 
@@ -1404,6 +1407,41 @@ _read_crash_count() {
 _write_crash_count() {
   mkdir -p "$(dirname "$CRASH_COUNT_FILE")"
   printf '%s\n' "$1" > "$CRASH_COUNT_FILE"
+}
+
+# Bridge-specific crash tracking (separate from frontend/app crash count)
+_read_bridge_crash_count() {
+  local n=0
+  if [[ -f "$BRIDGE_CRASH_COUNT_FILE" ]]; then
+    n="$(head -n1 "$BRIDGE_CRASH_COUNT_FILE" 2>/dev/null | tr -dc '0-9')"
+    n="${n:-0}"
+  fi
+  echo "$n"
+}
+
+_write_bridge_crash_count() {
+  mkdir -p "$(dirname "$BRIDGE_CRASH_COUNT_FILE")"
+  printf '%s\n' "$1" > "$BRIDGE_CRASH_COUNT_FILE"
+}
+
+_record_bridge_launch_ts() {
+  mkdir -p "$(dirname "$BRIDGE_LAST_LAUNCH_TS_FILE")"
+  date +%s > "$BRIDGE_LAST_LAUNCH_TS_FILE"
+}
+
+_seconds_since_last_bridge_launch() {
+  if [[ ! -f "$BRIDGE_LAST_LAUNCH_TS_FILE" ]]; then
+    echo 99999
+    return
+  fi
+  local launch_ts now
+  launch_ts="$(head -n1 "$BRIDGE_LAST_LAUNCH_TS_FILE" 2>/dev/null | tr -dc '0-9')"
+  now="$(date +%s)"
+  if [[ -z "$launch_ts" ]]; then
+    echo 99999
+    return
+  fi
+  echo $(( now - launch_ts ))
 }
 
 _record_app_launch_ts() {
@@ -1539,6 +1577,25 @@ ensure_runtime_supervision() {
       log "KIOSK: runtime intentionally stopped from administration; waiting for manual relaunch."
     fi
     return 0
+  fi
+
+  # Bridge fast-crash detection and backoff: avoid relaunch thrash when the
+  # mqtt-can bridge repeatedly exits quickly (often hardware-related).
+  if [[ -f "$BRIDGE_LAST_LAUNCH_TS_FILE" ]] && ! pgrep -f "/cobien_bridge" >/dev/null 2>&1; then
+    local since_bridge
+    since_bridge="$(_seconds_since_last_bridge_launch)"
+    if (( since_bridge < FAST_CRASH_THRESHOLD_SEC )); then
+      local bcount backoff_sec
+      bcount="$(_read_bridge_crash_count)"
+      bcount=$((bcount + 1))
+      _write_bridge_crash_count "$bcount"
+      backoff_sec="$(_backoff_for_crash_count "$bcount")"
+      log "BRIDGE: fast exit detected (count=${bcount}). Backing off ${backoff_sec}s before any relaunch." 
+      sleep "$backoff_sec"
+      return 0
+    else
+      _write_bridge_crash_count 0
+    fi
   fi
 
   if is_frontend_runtime_running; then
