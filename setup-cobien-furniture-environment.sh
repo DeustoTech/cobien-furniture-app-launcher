@@ -102,7 +102,6 @@ BOOTSTRAP_APT_PACKAGES=(
     pipewire
     pipewire-pulse
     wireplumber
-    python3-evdev
 )
 
 init_colors() {
@@ -1759,6 +1758,25 @@ install_volume_daemon() {
     local udev_rule="/etc/udev/rules.d/70-cobien-input.rules"
 
     mkdir -p "$cobien_cfg_dir" "$systemd_user_dir"
+
+    # --- Ensure python3-evdev is available (apt preferred, pip fallback) ---
+    local evdev_ok=0
+    if python3 -c "import evdev" 2>/dev/null; then
+        evdev_ok=1
+    elif apt-get install -y python3-evdev 2>/dev/null; then
+        evdev_ok=1
+        print_status_badge OK "python3-evdev installed via apt"
+    elif pip3 install --break-system-packages evdev 2>/dev/null \
+         || pip3 install evdev 2>/dev/null; then
+        evdev_ok=1
+        print_status_badge OK "python3-evdev installed via pip"
+    fi
+
+    if [[ "$evdev_ok" -eq 0 ]]; then
+        print_status_badge WARN "python3-evdev not available — volume daemon skipped (no internet?)"
+        print_status_badge WARN "Run 'pip3 install evdev' when online and re-run the installer to activate it."
+        return 0
+    fi
 
     # --- Python evdev daemon ---
     cat > "$daemon_script" <<'PYEOF'
