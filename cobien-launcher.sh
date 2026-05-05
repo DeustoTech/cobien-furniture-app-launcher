@@ -994,6 +994,8 @@ resolve_paths() {
   UPDATE_MARKER_FILE="$RUNTIME_STATE_DIR/system_updated.json"
   LAUNCHER_STOP_REQUEST_FILE="$RUNTIME_STATE_DIR/launcher_stop_requested.flag"
   MANUAL_UPDATE_RELOAD_FILE="$RUNTIME_STATE_DIR/manual_update_reload.flag"
+  CRASH_COUNT_FILE="$RUNTIME_STATE_DIR/crash_count"
+  LAST_LAUNCH_TS_FILE="$RUNTIME_STATE_DIR/last_launch_ts"
 }
 
 derive_default_device_id() {
@@ -1383,6 +1385,150 @@ launch_runtime() {
   fi
 
   runtime_launch_background "cobien-app" "$(runtime_app_command)"
+  _record_app_launch_ts
+}
+
+# ── Crash-loop detection, backoff and environment heal ──────────────────────
+
+FAST_CRASH_THRESHOLD_SEC=10
+
+_read_crash_count() {
+  local n=0
+  if [[ -f "$CRASH_COUNT_FILE" ]]; then
+    n="$(head -n1 "$CRASH_COUNT_FILE" 2>/dev/null | tr -dc '0-9')"
+    n="${n:-0}"
+  fi
+  echo "$n"
+}
+
+_write_crash_count() {
+  mkdir -p "$(dirname "$CRASH_COUNT_FILE")"
+  printf '%s\n' "$1" > "$CRASH_COUNT_FILE"
+}
+
+_record_app_launch_ts() {
+  mkdir -p "$(dirname "$LAST_LAUNCH_TS_FILE")"
+  date +%s > "$LAST_LAUNCH_TS_FILE"
+}
+
+_seconds_since_last_launch() {
+  if [[ ! -f "$LAST_LAUNCH_TS_FILE" ]]; then
+    echo 99999
+    return
+  fi
+  local launch_ts now
+  launch_ts="$(head -n1 "$LAST_LAUNCH_TS_FILE" 2>/dev/null | tr -dc '0-9')"
+  now="$(date +%s)"
+  if [[ -z "$launch_ts" ]]; then
+    echo 99999
+    return
+  fi
+  echo $(( now - launch_ts ))
+}
+
+_backoff_for_crash_count() {
+  local n="$1"
+  if   (( n <= 0 )); then echo 0
+  elif (( n == 1 )); then echo 5
+  elif (( n == 2 )); then echo 15
+  else                    echo 60
+  fi
+}
+
+_assess_runtime_crash() {
+  local uptime
+  uptime="$(_seconds_since_last_launch)"
+  (( uptime < FAST_CRASH_THRESHOLD_SEC ))
+}
+
+_get_latest_app_log() {
+  local log
+  log="$(find "$LOG_DIR" -maxdepth 1 -type f -name "cobien-app-*.log" 2>/dev/null \
+         | sort | tail -n1)"
+  echo "${log:-}"
+}
+
+_log_heal() {
+  local msg="$*"
+  local heal_log="$LOG_DIR/runtime-heal-$(date +%Y%m%d).log"
+  mkdir -p "$LOG_DIR"
+  printf '[%s] [HEAL] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$msg" >> "$heal_log" 2>/dev/null || true
+  log "HEAL: $msg"
+}
+
+heal_runtime_environment() {
+  local crash_count="${1:-0}"
+  local healed=0
+  local app_log
+  app_log="$(_get_latest_app_log)"
+
+  _log_heal "Running environment heal (crash_count=${crash_count}, log=${app_log:-none})"
+
+  # 1. Stale PID / lock files
+  local pid_file="$RUNTIME_STATE_DIR/cobien-app.pid"
+  if [[ -f "$pid_file" ]]; then
+    local stored_pid
+    stored_pid="$(head -n1 "$pid_file" 2>/dev/null | tr -dc '0-9')"
+    if [[ -n "$stored_pid" ]] && ! kill -0 "$stored_pid" 2>/dev/null; then
+      _log_heal "Stale PID file (PID=$stored_pid not running). Removing lock and PID files."
+      rm -f "$pid_file" "$RUNTIME_STATE_DIR/cobien-app.lock" || true
+      healed=1
+    fi
+  fi
+
+  # 2. DISPLAY / WAYLAND_DISPLAY missing
+  if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    _log_heal "No DISPLAY or WAYLAND_DISPLAY in environment."
+    if [[ -f "$LAUNCHER_ROOT/import-systemd-user-env.sh" ]]; then
+      bash "$LAUNCHER_ROOT/import-systemd-user-env.sh" >/dev/null 2>&1 || true
+      local disp wayland
+      disp="$(systemctl --user show-environment 2>/dev/null | grep '^DISPLAY=' | head -n1 | cut -d= -f2-)"
+      wayland="$(systemctl --user show-environment 2>/dev/null | grep '^WAYLAND_DISPLAY=' | head -n1 | cut -d= -f2-)"
+      if [[ -n "$disp" ]]; then
+        export DISPLAY="$disp"
+        _log_heal "DISPLAY imported from systemd session: $disp"
+        healed=1
+      fi
+      if [[ -n "$wayland" ]]; then
+        export WAYLAND_DISPLAY="$wayland"
+        _log_heal "WAYLAND_DISPLAY imported from systemd session: $wayland"
+        healed=1
+      fi
+    fi
+    if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+      if [[ -S "/tmp/.X11-unix/X0" ]]; then
+        export DISPLAY=":0"
+        _log_heal "DISPLAY guessed as :0 (X11 socket found at /tmp/.X11-unix/X0)"
+        healed=1
+      else
+        _log_heal "WARN: Cannot determine display server. App may fail to open a window."
+      fi
+    fi
+  fi
+
+  # 3. OpenGL / EGL failure (VM / software rendering)
+  if [[ -z "${KIVY_GL_BACKEND:-}" && -n "$app_log" ]]; then
+    if grep -qiE "egl|no display|gl error|opengl|glx|failed to create context|context creation" "$app_log" 2>/dev/null; then
+      _log_heal "OpenGL/EGL error in log. Setting KIVY_GL_BACKEND=sdl2 and KIVY_GRAPHICS=gles2."
+      export KIVY_GL_BACKEND="sdl2"
+      export KIVY_GRAPHICS="gles2"
+      healed=1
+    fi
+  fi
+
+  # 4. pyaudio / ALSA failure
+  if [[ -z "${COBIEN_AUDIO_HEAL_APPLIED:-}" && -n "$app_log" ]]; then
+    if grep -qiE "pyaudio|no default input|portaudio|alsa.*error|cannot open.*device|device unavailable" "$app_log" 2>/dev/null; then
+      _log_heal "Audio device error in log. Disabling microphone input for this session."
+      export COBIEN_MICROPHONE_DEVICE="none"
+      export COBIEN_AUDIO_HEAL_APPLIED="1"
+      healed=1
+    fi
+  fi
+
+  if [[ "$healed" -eq 0 ]]; then
+    _log_heal "No actionable issue detected. Proceeding with standard relaunch."
+  fi
 }
 
 ensure_runtime_supervision() {
@@ -1396,10 +1542,37 @@ ensure_runtime_supervision() {
   fi
 
   if is_frontend_runtime_running; then
+    local uptime
+    uptime="$(_seconds_since_last_launch)"
+    if (( uptime >= FAST_CRASH_THRESHOLD_SEC )); then
+      local current_count
+      current_count="$(_read_crash_count)"
+      if (( current_count > 0 )); then
+        _write_crash_count 0
+      fi
+    fi
     return 0
   fi
 
-  log "KIOSK: frontend runtime is not running; relaunching immediately."
+  local crash_count backoff_sec
+  if _assess_runtime_crash; then
+    crash_count=$(( $(_read_crash_count) + 1 ))
+    _write_crash_count "$crash_count"
+    log "KIOSK: fast exit detected (crash #${crash_count}, threshold=${FAST_CRASH_THRESHOLD_SEC}s)."
+    if (( crash_count >= 3 )); then
+      log "KIOSK: crash-loop threshold reached. Running environment heal."
+      heal_runtime_environment "$crash_count"
+    fi
+    backoff_sec="$(_backoff_for_crash_count "$crash_count")"
+    if (( backoff_sec > 0 )); then
+      log "KIOSK: backing off ${backoff_sec}s before relaunch (crash_count=${crash_count})."
+      sleep "$backoff_sec"
+    fi
+  else
+    _write_crash_count 0
+    log "KIOSK: frontend runtime is not running; relaunching."
+  fi
+
   launch_runtime 0
 }
 
