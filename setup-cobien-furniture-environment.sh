@@ -102,6 +102,7 @@ BOOTSTRAP_APT_PACKAGES=(
     pipewire
     pipewire-pulse
     wireplumber
+    python3-evdev
 )
 
 init_colors() {
@@ -1746,6 +1747,148 @@ on_error() {
 
 trap 'on_error $? $LINENO' ERR
 
+install_volume_daemon() {
+    # Bypass X11/SDL2 entirely: read raw evdev events from the hardware
+    # volume encoder and call pactl directly.  This works even when Kivy/SDL2
+    # holds an exclusive keyboard grab that prevents xbindkeys from seeing
+    # XF86Audio* keysyms.
+    local cobien_cfg_dir="$TARGET_HOME/.config/cobien"
+    local systemd_user_dir="$TARGET_HOME/.config/systemd/user"
+    local daemon_script="$cobien_cfg_dir/volume-daemon.py"
+    local service_file="$systemd_user_dir/cobien-volume.service"
+    local udev_rule="/etc/udev/rules.d/70-cobien-input.rules"
+
+    mkdir -p "$cobien_cfg_dir" "$systemd_user_dir"
+
+    # --- Python evdev daemon ---
+    cat > "$daemon_script" <<'PYEOF'
+#!/usr/bin/env python3
+"""
+cobien-volume-daemon  —  raw evdev volume wheel handler.
+
+Reads KEY_VOLUMEUP / KEY_VOLUMEDOWN / KEY_MUTE from all /dev/input devices
+that expose those keys and calls pactl to adjust PipeWire-Pulse volume.
+Runs as a systemd user service; requires the 'input' group for /dev/input
+access (granted by the udev rule 70-cobien-input.rules).
+"""
+import subprocess
+import sys
+
+try:
+    import evdev
+    from evdev import ecodes
+except ImportError:
+    sys.exit("python3-evdev not installed")
+
+STEP = "5%"
+
+def _pactl(*args):
+    subprocess.Popen(
+        ["pactl", *args],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+def _handle(code):
+    if code == ecodes.KEY_VOLUMEUP:
+        _pactl("set-sink-volume", "@DEFAULT_SINK@", f"+{STEP}")
+    elif code == ecodes.KEY_VOLUMEDOWN:
+        _pactl("set-sink-volume", "@DEFAULT_SINK@", f"-{STEP}")
+    elif code == ecodes.KEY_MUTE:
+        _pactl("set-sink-mute", "@DEFAULT_SINK@", "toggle")
+
+def _volume_devices():
+    """Return all input devices that have at least one volume key."""
+    want = {ecodes.KEY_VOLUMEUP, ecodes.KEY_VOLUMEDOWN, ecodes.KEY_MUTE}
+    devices = []
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+            caps = dev.capabilities().get(ecodes.EV_KEY, [])
+            if want & set(caps):
+                devices.append(dev)
+        except Exception:
+            pass
+    return devices
+
+def main():
+    devices = _volume_devices()
+    if not devices:
+        sys.exit("No volume-capable input device found")
+    for dev in devices:
+        print(f"[cobien-volume] Listening on {dev.path} ({dev.name})", flush=True)
+
+    selector = evdev.device.DeviceGroup(devices) if hasattr(evdev.device, "DeviceGroup") else None
+
+    if selector:
+        for event in selector.read_loop():
+            if event.type == ecodes.EV_KEY and event.value == 1:
+                _handle(event.code)
+    else:
+        # Fallback for older python3-evdev without DeviceGroup: use select()
+        import select
+
+        fds = {dev.fd: dev for dev in devices}
+        while True:
+            r, _, _ = select.select(fds.keys(), [], [])
+            for fd in r:
+                for event in fds[fd].read():
+                    if event.type == ecodes.EV_KEY and event.value == 1:
+                        _handle(event.code)
+
+if __name__ == "__main__":
+    main()
+PYEOF
+
+    chmod +x "$daemon_script"
+    chown "$TARGET_USER:$TARGET_USER" "$daemon_script"
+
+    # --- Systemd user service ---
+    cat > "$service_file" <<EOF
+[Unit]
+Description=CoBien hardware volume wheel daemon
+After=pipewire.service pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 $daemon_script
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+    chown "$TARGET_USER:$TARGET_USER" "$service_file"
+    chmod 0644 "$service_file"
+
+    # --- Udev rule: grant 'input' group read access to all /dev/input devices ---
+    sudo tee "$udev_rule" > /dev/null <<'UDEV'
+# CoBien: allow the 'input' group to read hardware input devices (volume wheel, etc.)
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0660"
+UDEV
+
+    # Ensure TARGET_USER is in the input group
+    if getent group input > /dev/null 2>&1; then
+        sudo usermod -aG input "$TARGET_USER" || true
+        print_status_badge OK "Added $TARGET_USER to 'input' group"
+    else
+        sudo groupadd --system input || true
+        sudo usermod -aG input "$TARGET_USER" || true
+        print_status_badge OK "Created 'input' group and added $TARGET_USER"
+    fi
+
+    sudo udevadm control --reload-rules 2>/dev/null || true
+    sudo udevadm trigger --subsystem-match=input 2>/dev/null || true
+
+    _systemctl_user daemon-reload
+    _systemctl_user enable cobien-volume.service
+
+    print_status_badge OK "Volume daemon installed (cobien-volume.service)"
+}
+
 main() {
     init_colors
     clear 2>/dev/null || true
@@ -1809,6 +1952,9 @@ main() {
 
     phase "Installing user services" "Registering CoBien systemd user units without starting the runtime in this session."
     install_systemd_user_units
+
+    phase "Installing hardware volume daemon" "Wiring the rotary encoder to PipeWire via evdev — bypasses X11/SDL2 keyboard grabs."
+    install_volume_daemon
 
     print_summary
     phase "Finalizing installation" "Reviewing the result and handing off to the reboot that will activate the full furniture session."
