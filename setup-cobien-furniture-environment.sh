@@ -1406,7 +1406,18 @@ apply_touch_rotation() {
     done
 }
 
-if command -v setxkbmap >/dev/null 2>&1 && [ "${APP_LANGUAGE}" = "es" ]; then
+_cobien_language=""
+for _env_candidate in \
+    "\$HOME/cobien/cobien-furniture-app-launcher/cobien.env" \
+    "\$HOME/cobien/cobien.env" \
+    "/home/${TARGET_USER}/cobien/cobien-furniture-app-launcher/cobien.env"; do
+    if [ -f "\$_env_candidate" ]; then
+        _cobien_language="\$(grep -m1 '^COBIEN_APP_LANGUAGE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')" || true
+        [ -n "\$_cobien_language" ] && break
+    fi
+done
+
+if command -v setxkbmap >/dev/null 2>&1 && [ "\${_cobien_language:-}" = "es" ]; then
   setxkbmap es >/tmp/cobien-setxkbmap.log 2>&1 || true
 fi
 
