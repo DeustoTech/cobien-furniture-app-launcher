@@ -1259,11 +1259,18 @@ close_runtime_windows() {
 }
 
 stop_runtime_processes() {
-  pkill -f "candump can0" >/dev/null 2>&1 || true
-  pkill -f "/cobien_bridge" >/dev/null 2>&1 || true
+  # Only stops the frontend app — NOT the MQTT-CAN bridge.
+  # The bridge is independent and must survive frontend restarts to keep
+  # the MQTT connection alive.  Use stop_bridge_process() when the bridge
+  # itself needs to be restarted (e.g. full clean-launch or bridge crash).
   pkill -f "mainApp.py" >/dev/null 2>&1 || true
   pkill -f "uv run --python .* mainApp.py" >/dev/null 2>&1 || true
   pkill -f "\\[APP\\] Launching frontend with uv" >/dev/null 2>&1 || true
+}
+
+stop_bridge_process() {
+  pkill -f "candump can0" >/dev/null 2>&1 || true
+  pkill -f "/cobien_bridge" >/dev/null 2>&1 || true
   pkill -f "\\[BRIDGE\\] Build and launch" >/dev/null 2>&1 || true
   pkill -f "\\[CAN\\] Initializing the CAN bus" >/dev/null 2>&1 || true
 }
@@ -1382,9 +1389,13 @@ launch_runtime() {
   fi
 
   if should_enable_hardware_runtime; then
-    runtime_launch_background "mqtt-can-bridge" "$(runtime_bridge_command)"
-    _record_bridge_launch_ts || true
-    wait_for_bridge 30 || true
+    if pgrep -f "/cobien_bridge" >/dev/null 2>&1; then
+      log "BRIDGE: already running — keeping existing bridge process (MQTT connection preserved)."
+    else
+      runtime_launch_background "mqtt-can-bridge" "$(runtime_bridge_command)"
+      _record_bridge_launch_ts || true
+      wait_for_bridge 30 || true
+    fi
   fi
 
   runtime_launch_background "cobien-app" "$(runtime_app_command)"
@@ -3473,6 +3484,7 @@ run_update_once() {
   stop_all_other_launcher_processes || true
   wait_for_no_other_launcher_processes 10 || true
   stop_runtime_processes
+  stop_bridge_process
   wait_for_runtime_shutdown 20 || true
 
   # Check the launcher repo first: if cobien-launcher.sh itself changed, handoff_to_updated_launcher
