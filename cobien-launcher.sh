@@ -1228,7 +1228,7 @@ runtime_launch_background() {
   cleanup_old_logs "$name"
   log "FALLBACK: Launching $name in background. Log: $log_file"
   printf '[%s] [%s] Starting background command\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$name" >>"$log_file"
-  ( nohup bash -lc "$command_text" | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" 2>&1 ) &
+  ( nohup env PYTHONUNBUFFERED=1 bash -lc "$command_text" 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" ) &
   disown $!
 }
 
@@ -1382,20 +1382,20 @@ launch_runtime() {
 
   if should_enable_hardware_runtime; then
     log "Hardware runtime enabled (mode=$HARDWARE_MODE)"
-    setup_can_bus
-    start_can_logger_background
-  else
-    log "WARN: Hardware runtime disabled (mode=$HARDWARE_MODE). Skipping CAN setup/logger/bridge."
-  fi
-
-  if should_enable_hardware_runtime; then
     if pgrep -f "/cobien_bridge" >/dev/null 2>&1; then
-      log "BRIDGE: already running — keeping existing bridge process (MQTT connection preserved)."
+      log "BRIDGE: already running — skipping CAN bus reset and bridge relaunch (MQTT connection preserved)."
+      start_can_logger_background
     else
+      # Only reset the CAN interface when the bridge is not running; resetting
+      # while the bridge is live drops its socket and forces an unnecessary restart.
+      setup_can_bus
+      start_can_logger_background
       runtime_launch_background "mqtt-can-bridge" "$(runtime_bridge_command)"
       _record_bridge_launch_ts || true
       wait_for_bridge 30 || true
     fi
+  else
+    log "WARN: Hardware runtime disabled (mode=$HARDWARE_MODE). Skipping CAN setup/logger/bridge."
   fi
 
   runtime_launch_background "cobien-app" "$(runtime_app_command)"
@@ -2976,6 +2976,12 @@ PY
 ensure_mosquitto_running() {
   if pgrep -x mosquitto >/dev/null 2>&1; then
     log "Mosquitto already running (process detected)"
+    return
+  fi
+  # Also check via systemd before attempting any restart, to avoid
+  # kicking an active broker that just isn't visible to pgrep yet.
+  if command -v systemctl >/dev/null 2>&1 && sudo systemctl is-active --quiet mosquitto 2>/dev/null; then
+    log "Mosquitto already running (systemd active)"
     return
   fi
 
