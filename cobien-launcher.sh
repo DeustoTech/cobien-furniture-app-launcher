@@ -1228,7 +1228,7 @@ runtime_launch_background() {
   cleanup_old_logs "$name"
   log "FALLBACK: Launching $name in background. Log: $log_file"
   printf '[%s] [%s] Starting background command\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$name" >>"$log_file"
-  ( PYTHONUNBUFFERED=1 bash -lc "$command_text" 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" ) &
+  ( PYTHONUNBUFFERED=1 nohup bash -lc "$command_text" 2>&1 | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush(); }' >>"$log_file" 2>/dev/null ) &
   disown $!
 }
 
