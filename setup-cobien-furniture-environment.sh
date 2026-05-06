@@ -1406,6 +1406,10 @@ apply_touch_rotation() {
     done
 }
 
+if command -v setxkbmap >/dev/null 2>&1 && [ "${APP_LANGUAGE}" = "es" ]; then
+  setxkbmap es >/tmp/cobien-setxkbmap.log 2>&1 || true
+fi
+
 sleep 2
 apply_display_rotation
 sleep 1
