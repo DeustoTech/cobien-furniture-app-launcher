@@ -3144,9 +3144,24 @@ _heal_venv_permissions() {
 
 prepare_venv() {
   log_phase_banner "Node.js dependencies" "Installing Electron and frontend Node dependencies using npm."
+  
+  if ! command -v npm >/dev/null 2>&1; then
+    log "ERROR: npm command not found. Cannot install Node.js dependencies."
+    exit 1
+  fi
+
   animate_status "Running npm install in $FRONTEND_APP_DIR"
   cd "$FRONTEND_APP_DIR" || exit
-  npm install
+
+  local run_user
+  run_user="$(id -un)"
+
+  if [[ "$run_user" == "root" && -n "${COBIEN_CAN_SUDOERS_USER:-}" ]]; then
+    log "Running npm install as user $COBIEN_CAN_SUDOERS_USER"
+    sudo -u "$COBIEN_CAN_SUDOERS_USER" npm install
+  else
+    npm install
+  fi
 }
 
 shell_quote_env_value() {

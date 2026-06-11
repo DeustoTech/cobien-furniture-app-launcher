@@ -1971,6 +1971,9 @@ EOF"
 
     # Start the container
     log INFO "Starting local Mosquitto MQTT broker container..."
+    if command -v systemctl >/dev/null 2>&1; then
+        sudo systemctl enable --now docker || true
+    fi
     if command -v docker >/dev/null 2>&1; then
         # Run docker compose using sudo since user group change won't take effect in the current session
         sudo docker compose -f "$mosquitto_dir/docker-compose.yml" up -d || true
