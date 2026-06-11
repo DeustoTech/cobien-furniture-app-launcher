@@ -41,7 +41,7 @@ USER_NAME="$TARGET_USER"
 USER_HOME="$TARGET_HOME"
 
 PROJECT_DIR="${COBIEN_WORKSPACE_ROOT:-$USER_HOME/cobien}"
-FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-cobien_FrontEnd}"
+FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-cobien-furniture-electron}"
 MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-cobien_MQTT_Dictionnary}"
 BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-master}"
 DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-eDP-1}"
@@ -88,6 +88,7 @@ LEGACY_CLEANUP_REASONS=()
 BOOTSTRAP_APT_PACKAGES=(
     git
     curl
+    build-essential
     openbox
     lightdm
     dunst
@@ -1015,15 +1016,24 @@ install_missing_bootstrap_packages() {
         fi
     done
 
-    if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+        log INFO "Missing bootstrap packages: ${missing_packages[*]}"
+        wait_for_apt_lock
+        run_cmd "Updating apt metadata" sudo apt update
+        run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
+    else
         log INFO "All required bootstrap packages are already installed."
-        return 0
     fi
 
-    log INFO "Missing bootstrap packages: ${missing_packages[*]}"
-    wait_for_apt_lock
-    run_cmd "Updating apt metadata" sudo apt update
-    run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
+    # Ensure Node.js v22 is installed
+    if ! command -v node >/dev/null 2>&1; then
+        log INFO "Node.js not found. Installing Node.js v22 from NodeSource..."
+        wait_for_apt_lock
+        run_cmd "Configuring NodeSource repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
+        run_cmd "Installing Node.js and NPM" sudo apt install -y nodejs
+    else
+        print_status_badge OK "Node.js already installed: $(node -v)"
+    fi
 }
 
 _verify_repo_sync() {
@@ -1645,22 +1655,16 @@ EOF
 fix_target_runtime_ownership() {
     # The launcher runs as root with HOME="$TARGET_HOME" so uv, pip and other
     # tools create files under the target user's home owned by root.  Fix all
-    # known locations in one pass.  Using broad subtrees (e.g. .local/share/uv)
-    # rather than individual files so newly created sub-paths are covered too.
+    # known locations in one pass.
     local path
     for path in \
         "$PROJECT_DIR" \
         "$PROJECT_DIR/$FRONTEND_REPO_NAME" \
-        "$PROJECT_DIR/$FRONTEND_REPO_NAME/app" \
-        "$PROJECT_DIR/$FRONTEND_REPO_NAME/app/.venv" \
         "$USER_HOME/.config/cobien" \
         "$USER_HOME/.cache/cobien" \
-        "$USER_HOME/.cache/uv" \
         "$USER_HOME/.local/bin" \
         "$USER_HOME/.local/state/cobien" \
-        "$USER_HOME/.local/share/cobien" \
-        "$USER_HOME/.local/share/uv" \
-        "$USER_HOME/.local/share/python-build-standalone"
+        "$USER_HOME/.local/share/cobien"
     do
         [[ -e "$path" || -L "$path" ]] || continue
         chown -R "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true

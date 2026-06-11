@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHER_ROOT_DEFAULT="$SCRIPT_DIR"
 
 WORKSPACE_ROOT_DEFAULT="${HOME}/cobien"
-FRONTEND_REPO_NAME_DEFAULT="cobien_FrontEnd"
+FRONTEND_REPO_NAME_DEFAULT="cobien-furniture-electron"
 MQTT_REPO_NAME_DEFAULT="cobien_MQTT_Dictionnary"
 BRANCH_NAME_DEFAULT="master"
 CRON_SCHEDULE_DEFAULT="0 1 * * *"
@@ -403,10 +403,7 @@ print_runtime_summary() {
   print_file_status "Cache dir" "${GLOBAL_CACHE_DIR:-unresolved}" dir
   print_file_status "Data dir" "${GLOBAL_DATA_DIR:-unresolved}" dir
   print_file_status "Unified config" "${LOCAL_CONFIG_PATH:-unresolved}"
-  print_file_status "Version" "${FRONTEND_APP_DIR:-}/VERSION"
-  print_file_status "Pyproject" "${FRONTEND_APP_DIR:-}/pyproject.toml"
-  print_file_status "Launcher contract" "${FRONTEND_APP_DIR:-}/config_runtime.py"
-  print_file_status "Main app" "${FRONTEND_APP_DIR:-}/mainApp.py"
+  print_file_status "Package JSON" "${FRONTEND_APP_DIR:-}/package.json"
   print_file_status "Bridge dir" "${BRIDGE_DIR:-unresolved}" dir
   print_file_status "CAN config" "${CAN_CONFIG:-unresolved}"
   echo
@@ -975,8 +972,8 @@ resolve_paths() {
   normalize_config_paths
   FRONTEND_REPO="$WORKSPACE_ROOT/$FRONTEND_REPO_NAME"
   MQTT_REPO="$WORKSPACE_ROOT/$MQTT_REPO_NAME"
-  FRONTEND_APP_DIR="$FRONTEND_REPO/app"
-  VENV_DIR="$FRONTEND_APP_DIR/.venv"
+  FRONTEND_APP_DIR="$FRONTEND_REPO"
+  VENV_DIR="$FRONTEND_APP_DIR/node_modules"
   ENV_FILE="$(expand_path_value "${COBIEN_UPDATE_ENV_FILE:-$GLOBAL_CONFIG_DIR/cobien-update.env}")"
   MASTER_ENV_FILE="$(expand_path_value "${COBIEN_MASTER_ENV_FILE:-$LAUNCHER_ROOT/cobien.env}")"
   CONFIG_DIR="$(expand_path_value "${COBIEN_CONFIG_DIR:-$GLOBAL_CONFIG_DIR}")"
@@ -1191,7 +1188,7 @@ wait_for_bridge() {
 
 runtime_app_command() {
   cat <<EOF
-echo '[APP] Launching frontend with uv'
+echo '[APP] Launching frontend with npm run dev'
 cd "$FRONTEND_APP_DIR" || exit
 if [[ -f "$ENV_FILE" ]]; then
   while IFS= read -r _line || [[ -n "\$_line" ]]; do
@@ -1207,15 +1204,14 @@ if [[ -f "$ENV_FILE" ]]; then
     export "\$_key=\$_val"
   done < "$ENV_FILE"
 fi
-if command -v "$UV_BIN" >/dev/null 2>&1; then
-  "$UV_BIN" run --python "$PYTHON_REQUEST" --project "$FRONTEND_APP_DIR" mainApp.py
-else
-  echo '[APP] uv not found, using fallback Python'
-  if [ -f "$VENV_DIR/bin/activate" ]; then
-    source "$VENV_DIR/bin/activate"
-  fi
-  "$PYTHON_BIN" mainApp.py
+
+# Ensure node_modules are present before launching
+if [[ ! -d "node_modules" ]]; then
+  echo '[APP] node_modules missing. Running npm install...'
+  npm install
 fi
+
+npm run dev
 EOF
 }
 
@@ -1263,9 +1259,9 @@ stop_runtime_processes() {
   # The bridge is independent and must survive frontend restarts to keep
   # the MQTT connection alive.  Use stop_bridge_process() when the bridge
   # itself needs to be restarted (e.g. full clean-launch or bridge crash).
-  pkill -f "mainApp.py" >/dev/null 2>&1 || true
-  pkill -f "uv run --python .* mainApp.py" >/dev/null 2>&1 || true
-  pkill -f "\\[APP\\] Launching frontend with uv" >/dev/null 2>&1 || true
+  pkill -f "electron" >/dev/null 2>&1 || true
+  pkill -f "vite" >/dev/null 2>&1 || true
+  pkill -f "\\[APP\\] Launching frontend with npm run dev" >/dev/null 2>&1 || true
 }
 
 stop_bridge_process() {
@@ -1299,7 +1295,7 @@ wait_for_runtime_shutdown() {
 
 count_running_runtime_processes() {
   local matches
-  matches="$(pgrep -af "candump can0|/cobien_bridge|mainApp.py|\\[APP\\] Launching frontend with uv|\\[BRIDGE\\] Build and launch|\\[CAN\\] Initializing the CAN bus" || true)"
+  matches="$(pgrep -af "candump can0|/cobien_bridge|electron|vite|\\[APP\\] Launching frontend with npm run dev|\\[BRIDGE\\] Build and launch|\\[CAN\\] Initializing the CAN bus" || true)"
   if [[ -z "${matches//[[:space:]]/}" ]]; then
     echo 0
     return
@@ -1342,7 +1338,7 @@ is_launcher_stop_requested() {
 }
 
 is_frontend_runtime_running() {
-  pgrep -f "mainApp.py|uv run --python .* mainApp.py|\\[APP\\] Launching frontend with uv" >/dev/null 2>&1
+  pgrep -f "electron" >/dev/null 2>&1
 }
 
 launch_runtime() {
@@ -1823,11 +1819,8 @@ check_paths_readonly() {
   [[ -d "$FRONTEND_APP_DIR" ]] || { log "Frontend app directory not found: $FRONTEND_APP_DIR"; return 1; }
   [[ -d "$BRIDGE_DIR" ]] || { log "Bridge directory not found: $BRIDGE_DIR"; return 1; }
   [[ -f "$SELF_SCRIPT" ]] || { log "Launcher script not found: $SELF_SCRIPT"; return 1; }
-  [[ -f "$FRONTEND_APP_DIR/mainApp.py" ]] || { log "Frontend entrypoint missing: $FRONTEND_APP_DIR/mainApp.py"; return 1; }
-  [[ -f "$FRONTEND_APP_DIR/pyproject.toml" ]] || { log "Pyproject missing: $FRONTEND_APP_DIR/pyproject.toml"; return 1; }
+  [[ -f "$FRONTEND_APP_DIR/package.json" ]] || { log "Frontend package.json missing: $FRONTEND_APP_DIR/package.json"; return 1; }
   [[ -f "$FRONTEND_APP_DIR/config/config.default.json" ]] || { log "Default unified config missing: $FRONTEND_APP_DIR/config/config.default.json"; return 1; }
-  [[ -f "$FRONTEND_APP_DIR/config_runtime.py" ]] || { log "Launcher config contract missing: $FRONTEND_APP_DIR/config_runtime.py"; return 1; }
-  [[ -f "$FRONTEND_APP_DIR/VERSION" ]] || { log "Version file missing: $FRONTEND_APP_DIR/VERSION"; return 1; }
   [[ -f "$CAN_CONFIG" ]] || { log "CAN conversion config missing: $CAN_CONFIG"; return 1; }
   [[ -f "$BRIDGE_DIR/Makefile" ]] || { log "Bridge Makefile missing: $BRIDGE_DIR/Makefile"; return 1; }
 }
@@ -3171,28 +3164,10 @@ _heal_venv_permissions() {
 }
 
 prepare_venv() {
-  resolve_python_bin
-  resolve_uv_bin
-
-  log_phase_banner "Python and virtualenv" "The requested interpreter is always provisioned through uv, and the furniture venv is rebuilt from there."
-  animate_status "Ensuring Python ${PYTHON_REQUEST} with uv"
-  "$UV_BIN" python install "$PYTHON_REQUEST"
-
-  _heal_venv_permissions
-
-  if [[ "$RECREATE_VENV" == "1" && -d "$VENV_DIR" ]]; then
-    log "Removing previous virtual environment: $VENV_DIR"
-    rm -rf "$VENV_DIR"
-  fi
-
-  animate_status "Preparing the CoBien virtual environment"
-  if [[ -d "$VENV_DIR" ]]; then
-    "$UV_BIN" venv --clear --python "$PYTHON_REQUEST" "$VENV_DIR"
-  else
-    "$UV_BIN" venv --python "$PYTHON_REQUEST" "$VENV_DIR"
-  fi
-  animate_status "Synchronizing Python dependencies with uv"
-  "$UV_BIN" sync --python "$PYTHON_REQUEST" --project "$FRONTEND_APP_DIR"
+  log_phase_banner "Node.js dependencies" "Installing Electron and frontend Node dependencies using npm."
+  animate_status "Running npm install in $FRONTEND_APP_DIR"
+  cd "$FRONTEND_APP_DIR" || exit
+  npm install
 }
 
 shell_quote_env_value() {
@@ -3481,7 +3456,7 @@ run_update_once() {
     manual_reload_requested="1"
     log "Manual update requested from furniture administration; runtime will be relaunched even if repositories are already up to date."
   fi
-  log_phase_banner "Repository update" "Refreshing launcher, cobien_FrontEnd and cobien_MQTT_Dictionnary before continuing with the runtime."
+  log_phase_banner "Repository update" "Refreshing launcher, cobien-furniture-electron and cobien_MQTT_Dictionnary before continuing with the runtime."
   log "Preparing update handoff: ensuring only one launcher/runtime instance remains before updating."
 
   if ! is_running_inside_systemd_user_service && has_active_systemd_user_launcher_service; then
@@ -3722,9 +3697,7 @@ print_diagnostics() {
   print_file_status "Piper runtime dir" "$PIPER_RUNTIME_DIR" dir
   print_file_status "Unified config" "$LOCAL_CONFIG_PATH"
   print_file_status "Default config" "$FRONTEND_APP_DIR/config/config.default.json"
-  print_file_status "Launcher contract" "$FRONTEND_APP_DIR/config_runtime.py"
-  print_file_status "Main app" "$FRONTEND_APP_DIR/mainApp.py"
-  print_file_status "Pyproject" "$FRONTEND_APP_DIR/pyproject.toml"
+  print_file_status "Package JSON" "$FRONTEND_APP_DIR/package.json"
   print_file_status "Bridge dir" "$BRIDGE_DIR" dir
   print_file_status "CAN config" "$CAN_CONFIG"
   print_file_status "Session env helper" "$LAUNCHER_ROOT/import-systemd-user-env.sh"
