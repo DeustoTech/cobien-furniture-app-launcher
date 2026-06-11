@@ -89,6 +89,8 @@ BOOTSTRAP_APT_PACKAGES=(
     git
     curl
     build-essential
+    docker.io
+    docker-compose-v2
     openbox
     lightdm
     dunst
@@ -1926,6 +1928,57 @@ UDEV
     print_status_badge OK "Volume daemon installed (cobien-volume.service)"
 }
 
+configure_mqtt_broker_docker() {
+    local mosquitto_dir="$PROJECT_DIR/mosquitto"
+    local config_dir="$mosquitto_dir/config"
+
+    run_cmd "Creating Mosquitto config directory" mkdir -p "$config_dir"
+    
+    # Write mosquitto.conf
+    run_cmd "Writing Mosquitto configuration" bash -c "cat << 'EOF' > '$config_dir/mosquitto.conf'
+listener 1883
+allow_anonymous true
+
+# WebSocket port (optional, useful for web browser clients)
+listener 9001
+protocol websockets
+allow_anonymous true
+EOF"
+
+    # Write docker-compose.yml
+    run_cmd "Writing Mosquitto docker-compose.yml" bash -c "cat << 'EOF' > '$mosquitto_dir/docker-compose.yml'
+version: '3.8'
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: cobien-mosquitto
+    ports:
+      - \"1883:1883\"
+      - \"9001:9001\"
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: unless-stopped
+EOF"
+
+    # Fix ownership
+    chown -R "$TARGET_USER:$TARGET_USER" "$mosquitto_dir"
+
+    # Ensure target user is in docker group
+    if getent group docker >/dev/null 2>&1; then
+        sudo usermod -aG docker "$TARGET_USER" || true
+    fi
+
+    # Start the container
+    log INFO "Starting local Mosquitto MQTT broker container..."
+    if command -v docker >/dev/null 2>&1; then
+        # Run docker compose using sudo since user group change won't take effect in the current session
+        sudo docker compose -f "$mosquitto_dir/docker-compose.yml" up -d || true
+    else
+        log WARN "Docker command not found; container could not be started yet."
+    fi
+}
+
 main() {
     init_colors
     clear 2>/dev/null || true
@@ -1959,9 +2012,10 @@ main() {
     phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be verified and installed only when missing."
     install_missing_bootstrap_packages
 
-    phase "Preparing workspace" "The furniture repositories will live under the target workspace."
+    phase "Preparing workspace and MQTT broker" "The furniture workspace and local Docker MQTT broker will be prepared."
     run_cmd "Creating workspace directory" mkdir -p "$PROJECT_DIR"
     chown "$TARGET_USER:$TARGET_USER" "$PROJECT_DIR"
+    configure_mqtt_broker_docker
 
     phase "Syncing repositories" "The production repositories will be cloned or updated on branch ${BRANCH_NAME}."
     ensure_repo "$PROJECT_DIR/$FRONTEND_REPO_NAME" "$FRONTEND_REPO" "frontend"

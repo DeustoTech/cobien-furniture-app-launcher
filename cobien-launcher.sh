@@ -1909,7 +1909,6 @@ install_system_deps_fn() {
     wmctrl gnome-terminal can-utils iproute2 xclip xsel
     alsa-utils
     pulseaudio-utils pipewire-pulse wireplumber pavucontrol
-    mosquitto mosquitto-clients
     libasound2-dev portaudio19-dev
     libgl1 libegl1 libglib2.0-0
     libgstreamer1.0-0 gstreamer1.0-plugins-base
@@ -2971,67 +2970,47 @@ ensure_mosquitto_running() {
     log "Mosquitto already running (process detected)"
     return
   fi
-  # Also check via systemd before attempting any restart, to avoid
-  # kicking an active broker that just isn't visible to pgrep yet.
-  if command -v systemctl >/dev/null 2>&1 && sudo systemctl is-active --quiet mosquitto 2>/dev/null; then
-    log "Mosquitto already running (systemd active)"
+  if command -v nc >/dev/null 2>&1 && nc -z localhost 1883 >/dev/null 2>&1; then
+    log "Mosquitto already running (port 1883 open)"
     return
   fi
 
-  if ! command -v mosquitto >/dev/null 2>&1; then
-    if ! can_perform_privileged_installs; then
-      log "ERROR: Mosquitto binary not found during '$MODE' and privileged installation is not allowed."
-      log "ERROR: Re-run setup-cobien-furniture-environment.sh to install the broker before reboot."
-      return
-    fi
-    log "Mosquitto binary not found. Installing it now (sudo may ask for password)..."
-    apt_get_locked update
-    apt_get_locked install -y mosquitto mosquitto-clients
-    if ! command -v mosquitto >/dev/null 2>&1; then
-      log "Mosquitto installation failed or binary still unavailable."
-      return
-    fi
-  fi
-
-  if command -v systemctl >/dev/null 2>&1; then
-    if sudo systemctl list-unit-files --no-legend 2>/dev/null | grep -q "^mosquitto.service"; then
-      if sudo systemctl is-active --quiet mosquitto; then
-        log "Mosquitto already running (systemd service)"
+  local compose_file="$WORKSPACE_ROOT/mosquitto/docker-compose.yml"
+  if [[ -f "$compose_file" ]]; then
+    log "Mosquitto not running. Attempting to start the Docker container..."
+    if command -v docker >/dev/null 2>&1; then
+      if sudo docker compose -f "$compose_file" up -d; then
+        log "Mosquitto container started successfully"
         return
       fi
-
-      if can_perform_privileged_installs; then
-        log "Starting Mosquitto service"
-        if sudo systemctl enable --now mosquitto && sudo systemctl is-active --quiet mosquitto; then
-          log "Mosquitto started successfully via systemd"
-          return
-        fi
-        log "Could not start Mosquitto via systemd, trying local process fallback"
-      else
-        log "Mosquitto system service is installed but inactive during '$MODE'; trying local process fallback without sudo"
-      fi
     else
-      log "mosquitto.service not found, using local process fallback"
+      log "ERROR: docker command not found; cannot start Mosquitto container"
     fi
   else
-    log "systemctl not available, using local process fallback"
+    log "WARN: Mosquitto docker-compose.yml not found at $compose_file"
   fi
 
-  local mosq_log_dir="${LOG_DIR:-/tmp}"
-  local mosq_state_dir="${RUNTIME_STATE_DIR:-${mosq_log_dir}}"
-  local mosq_log_file="$mosq_log_dir/mosquitto-local.log"
-  local mosq_cfg_file="$mosq_state_dir/mosquitto-local.conf"
-  mkdir -p "$mosq_log_dir" "$mosq_state_dir"
-  printf 'listener 1883 127.0.0.1\nallow_anonymous true\n' > "$mosq_cfg_file"
-  chmod 600 "$mosq_cfg_file"
-  ( nohup mosquitto -c "$mosq_cfg_file" >"$mosq_log_file" 2>&1 ) &
-  disown $!
-  sleep 1
+  # Local fallback if Docker is not available/failed
+  if command -v mosquitto >/dev/null 2>&1; then
+    log "Attempting native Mosquitto local fallback..."
+    local mosq_log_dir="${LOG_DIR:-/tmp}"
+    local mosq_state_dir="${RUNTIME_STATE_DIR:-${mosq_log_dir}}"
+    local mosq_log_file="$mosq_log_dir/mosquitto-local.log"
+    local mosq_cfg_file="$mosq_state_dir/mosquitto-local.conf"
+    mkdir -p "$mosq_log_dir" "$mosq_state_dir"
+    printf 'listener 1883 127.0.0.1\nallow_anonymous true\n' > "$mosq_cfg_file"
+    chmod 600 "$mosq_cfg_file"
+    ( nohup mosquitto -c "$mosq_cfg_file" >"$mosq_log_file" 2>&1 ) &
+    disown $!
+    sleep 1
 
-  if pgrep -x mosquitto >/dev/null 2>&1; then
-    log "Mosquitto started as local background process (log: $mosq_log_file)"
+    if pgrep -x mosquitto >/dev/null 2>&1; then
+      log "Mosquitto started as local background process (log: $mosq_log_file)"
+    else
+      log "Failed to start Mosquitto local process. Check log: $mosq_log_file"
+    fi
   else
-    log "Failed to start Mosquitto local process. Check log: $mosq_log_file"
+    log "ERROR: Both Docker container and native Mosquitto bin are unavailable."
   fi
 }
 
