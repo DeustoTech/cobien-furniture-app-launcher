@@ -1130,8 +1130,8 @@ install_missing_bootstrap_packages() {
     # Ensure Node.js v22 is installed
     if ! command -v node >/dev/null 2>&1; then
         log INFO "Node.js not found. Installing Node.js v22 from NodeSource..."
-        wait_for_apt_lock
         run_cmd "Configuring NodeSource repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
+        sudo chmod 0644 /etc/apt/sources.list.d/nodesource.sources 2>/dev/null || true
         wait_for_apt_lock
         run_cmd "Installing Node.js and NPM" sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs
     else
@@ -1604,6 +1604,7 @@ HandleLidSwitchExternalPower=ignore
 HandleLidSwitchDocked=ignore
 IdleAction=ignore
 EOF
+    sudo chmod 0644 /etc/systemd/logind.conf.d/50-cobien-kiosk.conf || true
 
     sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
     sudo systemctl restart systemd-logind >/dev/null 2>&1 || true
@@ -1619,6 +1620,7 @@ write_lightdm_config() {
 autologin-user=${USER_NAME}
 autologin-session=openbox
 EOF
+    sudo chmod 0644 /etc/lightdm/lightdm.conf.d/50-autologin.conf || true
 }
 
 disable_other_display_managers() {
@@ -1866,12 +1868,10 @@ fix_target_runtime_ownership() {
     local path
     for path in \
         "$PROJECT_DIR" \
-        "$PROJECT_DIR/$FRONTEND_REPO_NAME" \
-        "$USER_HOME/.config/cobien" \
-        "$USER_HOME/.cache/cobien" \
-        "$USER_HOME/.local/bin" \
-        "$USER_HOME/.local/state/cobien" \
-        "$USER_HOME/.local/share/cobien"
+        "$USER_HOME/.config" \
+        "$USER_HOME/.cache" \
+        "$USER_HOME/.local" \
+        "$USER_HOME/.xbindkeysrc"
     do
         [[ -e "$path" || -L "$path" ]] || continue
         chown -R "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true
@@ -2115,6 +2115,7 @@ EOF
 # CoBien: allow the 'input' group to read hardware input devices (volume wheel, etc.)
 KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0660"
 UDEV
+    sudo chmod 0644 "$udev_rule" || true
 
     # Ensure TARGET_USER is in the input group
     if getent group input > /dev/null 2>&1; then
