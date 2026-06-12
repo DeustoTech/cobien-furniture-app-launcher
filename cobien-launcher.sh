@@ -2012,6 +2012,11 @@ ensure_runtime_dependencies() {
 }
 
 configure_tts_runtime() {
+  is_valid_piper_bin() {
+    local bin="$1"
+    [[ -n "$bin" && -x "$bin" ]] && "$bin" --version >/dev/null 2>&1
+  }
+
   install_piper_runtime_binary() {
     local release_tag="${COBIEN_TTS_PIPER_RELEASE_TAG:-$TTS_PIPER_RELEASE_TAG_DEFAULT}"
     local machine archive_name runtime_dir archive_path download_url extracted_dir
@@ -2062,7 +2067,7 @@ configure_tts_runtime() {
   }
 
   install_piper_system_binary() {
-    local arch asset asset_url extract_dir asset_tmp piper_found dest_bin
+    local arch asset asset_url extract_dir asset_tmp piper_found dest_bin dest_dir
     arch="$(uname -m)"
     case "$arch" in
       x86_64|amd64) asset="piper_linux_x86_64.tar.gz" ;;
@@ -2098,8 +2103,9 @@ configure_tts_runtime() {
       return 1
     fi
 
+    dest_dir="/usr/local/share/piper"
     dest_bin="/usr/local/bin/piper"
-    if sudo sh -c "mkdir -p /usr/local/bin && cp '$piper_found' '$dest_bin' && chmod 755 '$dest_bin'"; then
+    if sudo sh -c "rm -rf '$dest_dir' && mkdir -p '$dest_dir' && cp -r '$(dirname "$piper_found")/'* '$dest_dir/' && chmod -R 755 '$dest_dir' && ln -sf '$dest_dir/piper' '$dest_bin'"; then
       log "Piper installed to: $dest_bin"
       TTS_PIPER_BIN="$dest_bin"
       TTS_PIPER_PROVIDER="system"
@@ -2238,21 +2244,35 @@ configure_tts_runtime() {
     return 0
   fi
 
-  if [[ -n "$TTS_PIPER_BIN" && -x "$TTS_PIPER_BIN" ]]; then
+  if is_valid_piper_bin "$TTS_PIPER_BIN"; then
     :
-  elif command -v piper >/dev/null 2>&1; then
+  elif command -v piper >/dev/null 2>&1 && is_valid_piper_bin "$(command -v piper)"; then
     TTS_PIPER_BIN="$(command -v piper)"
+    # infer provider from path
+    if [[ "$TTS_PIPER_BIN" == */snap/* || "$TTS_PIPER_BIN" == /snap/* ]]; then
+      TTS_PIPER_PROVIDER="snap"
+    elif [[ "$TTS_PIPER_BIN" == /usr/local/* ]]; then
+      TTS_PIPER_PROVIDER="system"
+    elif [[ "$TTS_PIPER_BIN" == $HOME/* ]]; then
+      TTS_PIPER_PROVIDER="user"
+    else
+      TTS_PIPER_PROVIDER="system"
+    fi
+    TTS_PIPER_VERSION="$($TTS_PIPER_BIN --version 2>/dev/null | sed -n '1p' || true)"
+    log "Piper already installed and valid: $TTS_PIPER_BIN (provider=$TTS_PIPER_PROVIDER)"
   else
+    # Reset TTS_PIPER_BIN so we try to install it
+    TTS_PIPER_BIN=""
     if ! can_perform_privileged_installs; then
-      log "ERROR: Piper TTS selected but no Piper binary is available during '$MODE'."
+      log "ERROR: Piper TTS selected but no valid Piper binary is available during '$MODE'."
       log "ERROR: Re-run setup-cobien-furniture-environment.sh so Piper is installed before the kiosk service starts."
       return 1
     fi
-    log "Piper TTS selected but binary not found. Trying apt install..."
+    log "Piper TTS selected but valid binary not found. Trying apt install..."
     apt_get_locked update || true
     apt_get_locked install -y piper-tts || true
 
-    if command -v piper >/dev/null 2>&1; then
+    if command -v piper >/dev/null 2>&1 && is_valid_piper_bin "$(command -v piper)"; then
       TTS_PIPER_BIN="$(command -v piper)"
       # infer provider from installation path
       if [[ "$TTS_PIPER_BIN" == */snap/* || "$TTS_PIPER_BIN" == /snap/* ]]; then
@@ -2269,7 +2289,7 @@ configure_tts_runtime() {
     else
       
       install_piper_binary() {
-        local arch asset_url asset_tmp extract_dir dest_bin
+        local arch asset_url asset_tmp extract_dir dest_bin dest_dir
         arch="$(uname -m)"
         case "$arch" in
           x86_64|amd64) asset="piper_linux_x86_64.tar.gz" ;;
@@ -2289,14 +2309,17 @@ configure_tts_runtime() {
           rm -rf "$extract_dir" || true
           return 1
         fi
-        mkdir -p "$HOME/.local/bin"
         if tar -xzf "$asset_tmp" -C "$extract_dir" >/dev/null 2>&1; then
           # find piper executable inside archive
           piper_found="$(find "$extract_dir" -type f -name piper -perm /111 | head -n1 || true)"
           if [[ -n "$piper_found" ]]; then
+            dest_dir="$HOME/.local/share/piper"
             dest_bin="$HOME/.local/bin/piper"
-            mv -f "$piper_found" "$dest_bin"
-            chmod +x "$dest_bin" || true
+            rm -rf "$dest_dir"
+            mkdir -p "$dest_dir" "$HOME/.local/bin"
+            cp -r "$(dirname "$piper_found")/"* "$dest_dir/"
+            chmod -R 755 "$dest_dir"
+            ln -sf "$dest_dir/piper" "$dest_bin"
             rm -rf "$extract_dir" || true
             TTS_PIPER_BIN="$dest_bin"
             TTS_PIPER_PROVIDER="user"
@@ -2378,7 +2401,7 @@ configure_tts_runtime() {
       fi
 
       # Final availability checks: prefer command on PATH, then user-local, then runtime
-      if command -v piper >/dev/null 2>&1; then
+      if command -v piper >/dev/null 2>&1 && is_valid_piper_bin "$(command -v piper)"; then
         TTS_PIPER_BIN="$(command -v piper)"
         # infer provider
         if [[ "$TTS_PIPER_BIN" == */snap/* || "$TTS_PIPER_BIN" == /snap/* ]]; then
@@ -2389,7 +2412,7 @@ configure_tts_runtime() {
           TTS_PIPER_PROVIDER="user"
         fi
         TTS_PIPER_VERSION="$($TTS_PIPER_BIN --version 2>/dev/null | sed -n '1p' || true)"
-      elif [[ -x "$HOME/.local/bin/piper" ]]; then
+      elif is_valid_piper_bin "$HOME/.local/bin/piper"; then
         TTS_PIPER_BIN="$HOME/.local/bin/piper"
         TTS_PIPER_PROVIDER="user"
         TTS_PIPER_VERSION="$($TTS_PIPER_BIN --version 2>/dev/null | sed -n '1p' || true)"
