@@ -1894,14 +1894,12 @@ apt_get_locked() {
 install_system_deps_fn() {
   local required_packages=(
     git curl wget build-essential cmake pkg-config
-    python3 python3-venv python3-pip
+    python3 python3-pip
     wmctrl gnome-terminal can-utils iproute2 xclip xsel
     alsa-utils
     pulseaudio-utils pipewire-pulse wireplumber pavucontrol
     libasound2-dev portaudio19-dev
     libgl1 libegl1 libglib2.0-0
-    libgstreamer1.0-0 gstreamer1.0-plugins-base
-    gstreamer1.0-plugins-good gstreamer1.0-libav
     libpulse0 libmosquitto-dev libcjson-dev
     libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4
     libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0
@@ -1980,11 +1978,10 @@ ensure_runtime_dependencies() {
       log "ERROR: Re-run setup-cobien-furniture-environment.sh to complete the installation."
       return 1
     fi
-    log "Python 3 base runtime missing. Installing generic python3 package so uv can bootstrap the requested interpreter."
+    log "Python 3 base runtime missing. Installing generic python3 packages."
     if [[ "$apt_updated" != "1" ]]; then apt_get_locked update; apt_updated="1"; fi
     local python_packages=()
     append_missing_apt_package "python3" python_packages
-    append_missing_apt_package "python3-venv" python_packages
     append_missing_apt_package "python3-pip" python_packages
     if [[ "${#python_packages[@]}" -gt 0 ]]; then
       apt_get_locked install -y "${python_packages[@]}"
@@ -3111,24 +3108,8 @@ resolve_uv_bin() {
 }
 
 _heal_venv_permissions() {
-  # Remove a venv that exists but is not readable/executable by the current user.
-  # This happens when a previous setup run was accidentally executed as root.
-  if [[ ! -d "$VENV_DIR" ]]; then return; fi
-  if [[ -x "$VENV_DIR/bin/python3" ]]; then return; fi
-
-  log "WARN: $VENV_DIR exists but is not accessible (wrong ownership). Attempting repair..."
-  # Try unprivileged chown first (works if the user is the filesystem owner)
-  chown -R "$(id -un):" "$VENV_DIR" 2>/dev/null && return
-
-  # Try to remove it so it gets recreated cleanly
-  rm -rf "$VENV_DIR" 2>/dev/null && { log "Removed inaccessible venv; it will be recreated."; return; }
-
-  # Last resort: sudo remove (requires NOPASSWD entry for rm, unlikely but worth trying)
-  if can_perform_privileged_installs; then
-    sudo rm -rf "$VENV_DIR" 2>/dev/null && { log "Removed inaccessible venv via sudo; it will be recreated."; return; }
-  fi
-
-  log "ERROR: Cannot remove $VENV_DIR — run: sudo rm -rf $VENV_DIR"
+  # No-op for Electron frontend (node_modules doesn't contain bin/python3)
+  return
 }
 
 prepare_venv() {
