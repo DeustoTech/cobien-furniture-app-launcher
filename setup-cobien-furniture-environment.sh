@@ -1566,10 +1566,10 @@ if [ -x "$HOME/.config/cobien/openbox-session.sh" ]; then
 fi
 EOF
 
-    chmod +x "$USER_HOME/.config/cobien/openbox-session.sh"
-    chmod +x "$USER_HOME/.config/openbox/autostart"
-    chmod +x "$USER_HOME/.config/cobien/volume-osd.sh"
-    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.config/dunst" "$USER_HOME/.xbindkeysrc"
+    chmod +x "$USER_HOME/.config/cobien/openbox-session.sh" 2>/dev/null || true
+    chmod +x "$USER_HOME/.config/openbox/autostart" 2>/dev/null || true
+    chmod +x "$USER_HOME/.config/cobien/volume-osd.sh" 2>/dev/null || true
+    chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.config/dunst" "$USER_HOME/.xbindkeysrc" 2>/dev/null || true
 }
 
 configure_kiosk_power_management() {
@@ -1727,8 +1727,8 @@ Terminal=false
 EOF
 
     ln -sfn ../cobien-update.timer "$timers_wants_dir/cobien-update.timer"
-    chown -R "$TARGET_USER:$TARGET_USER" "$systemd_user_dir" "$autostart_dir"
-    chmod 0644 "$systemd_user_dir/cobien-launcher.service" "$systemd_user_dir/cobien-update.service" "$systemd_user_dir/cobien-update.timer" "$autostart_file"
+    chown -R "$TARGET_USER:$TARGET_USER" "$systemd_user_dir" "$autostart_dir" 2>/dev/null || true
+    chmod 0644 "$systemd_user_dir/cobien-launcher.service" "$systemd_user_dir/cobien-update.service" "$systemd_user_dir/cobien-update.timer" "$autostart_file" 2>/dev/null || true
 
     _systemctl_user daemon-reload
     _systemctl_user enable --now cobien-update.timer
@@ -1962,8 +1962,8 @@ if __name__ == "__main__":
     main()
 PYEOF
 
-    chmod +x "$daemon_script"
-    chown "$TARGET_USER:$TARGET_USER" "$daemon_script"
+    chmod +x "$daemon_script" 2>/dev/null || true
+    chown "$TARGET_USER:$TARGET_USER" "$daemon_script" 2>/dev/null || true
 
     # --- Systemd user service ---
     cat > "$service_file" <<EOF
@@ -1983,8 +1983,8 @@ StandardError=journal
 WantedBy=default.target
 EOF
 
-    chown "$TARGET_USER:$TARGET_USER" "$service_file"
-    chmod 0644 "$service_file"
+    chown "$TARGET_USER:$TARGET_USER" "$service_file" 2>/dev/null || true
+    chmod 0644 "$service_file" 2>/dev/null || true
 
     # --- Udev rule: grant 'input' group read access to all /dev/input devices ---
     sudo tee "$udev_rule" > /dev/null <<'UDEV'
@@ -2045,7 +2045,7 @@ services:
 EOF"
 
     # Fix ownership
-    chown -R "$TARGET_USER:$TARGET_USER" "$mosquitto_dir"
+    chown -R "$TARGET_USER:$TARGET_USER" "$mosquitto_dir" 2>/dev/null || true
 
     # Ensure target user is in docker group
     if getent group docker >/dev/null 2>&1; then
@@ -2100,7 +2100,7 @@ main() {
 
     phase "Preparing workspace and MQTT broker" "The furniture workspace and local Docker MQTT broker will be prepared."
     run_cmd "Creating workspace directory" mkdir -p "$PROJECT_DIR"
-    chown "$TARGET_USER:$TARGET_USER" "$PROJECT_DIR"
+    chown "$TARGET_USER:$TARGET_USER" "$PROJECT_DIR" 2>/dev/null || true
     configure_mqtt_broker_docker
 
     phase "Syncing repositories" "The production repositories will be cloned or updated on branch ${BRANCH_NAME}."
