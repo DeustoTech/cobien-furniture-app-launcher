@@ -328,6 +328,12 @@ install_master_env_file() {
         log OK "Installed deployment env as canonical file: $target_env"
     fi
 
+    # Strip legacy frontend repo name to force migration to Electron
+    if [[ -f "$target_env" ]]; then
+        sed -i '/^COBIEN_FRONTEND_REPO_NAME=.*cobien_FrontEnd.*/d' "$target_env"
+        unset COBIEN_FRONTEND_REPO_NAME
+    fi
+
     MASTER_ENV_FILE="$target_env"
     load_selected_env_settings
 }
@@ -1774,11 +1780,13 @@ run_launcher_setup_mode() {
     local master_env="${MASTER_ENV_FILE:-$SCRIPT_DIR/cobien.env}"
     if [[ -f "$master_env" ]]; then
         sed -i '/^COBIEN_WORKSPACE_ROOT=/d' "$master_env"
+        sed -i '/^COBIEN_FRONTEND_REPO_NAME=.*cobien_FrontEnd.*/d' "$master_env"
     fi
 
     # Run with the target user's HOME so $HOME-based path expansions inside
     # the launcher resolve correctly even when this script runs as root.
     animate "Preparing the CoBien runtime with cobien-launcher.sh"
+    unset COBIEN_FRONTEND_REPO_NAME
     if [[ -n "$MASTER_ENV_FILE" ]]; then
         HOME="$TARGET_HOME" COBIEN_CAN_SUDOERS_USER="$TARGET_USER" COBIEN_MASTER_ENV_FILE="$MASTER_ENV_FILE" "${launcher_cmd[@]}"
     else
