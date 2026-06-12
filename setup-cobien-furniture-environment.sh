@@ -1019,13 +1019,27 @@ wait_for_apt_lock() {
     local max_wait=60
     local waited=0
     local interval=5
+    local lock_held=0
 
-    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/debconf/config.dat >/dev/null 2>&1; do
+    while true; do
+        if command -v fuser >/dev/null 2>&1; then
+            fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/debconf/config.dat >/dev/null 2>&1
+            lock_held=$?
+        else
+            pgrep -x "dpkg" >/dev/null || pgrep -f "unattended-upgrades|apt-get|dpkg-preconfigure" >/dev/null
+            lock_held=$?
+        fi
+
+        # lock_held is 0 if lock is found/process is running
+        if [[ "$lock_held" -ne 0 ]]; then
+            break
+        fi
+
         if [[ "$waited" -eq 0 ]]; then
-            log INFO "dpkg/apt lock is held by another process (likely unattended-upgrades). Waiting up to ${max_wait}s..."
+            log INFO "dpkg/apt/debconf lock is held by another process. Waiting up to ${max_wait}s..."
         fi
         if [[ "$waited" -ge "$max_wait" ]]; then
-            log WARN "dpkg lock still held after ${max_wait}s. Attempting to stop unattended-upgrades and proceed..."
+            log WARN "Lock still held after ${max_wait}s. Attempting to stop unattended-upgrades and proceed..."
             sudo systemctl stop unattended-upgrades 2>/dev/null || true
             sudo killall unattended-upgr 2>/dev/null || true
             sleep 3
@@ -1033,12 +1047,34 @@ wait_for_apt_lock() {
         fi
         sleep "$interval"
         waited=$(( waited + interval ))
-        log INFO "Still waiting for apt lock... ${waited}s / ${max_wait}s"
+        log INFO "Still waiting for lock... ${waited}s / ${max_wait}s"
     done
 
     if [[ "$waited" -gt 0 ]]; then
-        log INFO "apt lock released after ${waited}s."
+        log INFO "Lock released after ${waited}s."
     fi
+}
+
+run_debconf_selections() {
+    local cmd="$1"
+    local max_attempts=5
+    local attempt=0
+    
+    while true; do
+        attempt=$(( attempt + 1 ))
+        wait_for_apt_lock
+        if echo "$cmd" | sudo debconf-set-selections 2>/dev/null; then
+            break
+        fi
+        
+        if [[ "$attempt" -ge "$max_attempts" ]]; then
+            log ERROR "Failed to apply debconf selections after ${max_attempts} attempts."
+            return 1
+        fi
+        log WARN "debconf database is locked. Retrying in 3 seconds... (attempt ${attempt}/${max_attempts})"
+        sleep 3
+    done
+    return 0
 }
 
 install_missing_bootstrap_packages() {
@@ -1059,7 +1095,9 @@ install_missing_bootstrap_packages() {
         log INFO "Missing bootstrap packages: ${missing_packages[*]}"
         wait_for_apt_lock
         run_cmd "Updating apt metadata" sudo apt update
-        run_cmd "Preconfiguring lightdm as default display manager" bash -c "echo 'shared/default-x-display-manager select lightdm' | sudo debconf-set-selections"
+        wait_for_apt_lock
+        run_cmd "Preconfiguring lightdm as default display manager" run_debconf_selections "shared/default-x-display-manager select lightdm"
+        wait_for_apt_lock
         run_cmd "Installing missing packages" sudo DEBIAN_FRONTEND=noninteractive apt install -y "${missing_packages[@]}"
     else
         log INFO "All required bootstrap packages are already installed."
@@ -1070,6 +1108,7 @@ install_missing_bootstrap_packages() {
         log INFO "Node.js not found. Installing Node.js v22 from NodeSource..."
         wait_for_apt_lock
         run_cmd "Configuring NodeSource repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
+        wait_for_apt_lock
         run_cmd "Installing Node.js and NPM" sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs
     else
         print_status_badge OK "Node.js already installed: $(node -v)"
