@@ -1684,6 +1684,99 @@ install_systemd_user_units() {
         print_status_badge OK "Enabled linger for user: $TARGET_USER"
     fi
 
+    # Create/recreate import-systemd-user-env.sh locally in launcher root
+    cat > "$SCRIPT_DIR/import-systemd-user-env.sh" <<'ENVEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+VARS=(
+  DISPLAY
+  XAUTHORITY
+  DBUS_SESSION_BUS_ADDRESS
+  XDG_CURRENT_DESKTOP
+  XDG_SESSION_TYPE
+  DESKTOP_SESSION
+  WAYLAND_DISPLAY
+)
+
+SESSION_NAME="${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-unknown}}"
+
+printf '[COBIEN] Importing graphical session environment for systemd --user (%s)\n' "$SESSION_NAME"
+
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  dbus-update-activation-environment --systemd "${VARS[@]}" >/dev/null 2>&1 || true
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user import-environment "${VARS[@]}" >/dev/null 2>&1 || true
+  if systemctl --user cat cobien-launcher.service >/dev/null 2>&1; then
+    if systemctl --user is-active --quiet cobien-launcher.service 2>/dev/null; then
+      printf '[COBIEN] cobien-launcher.service already active; session environment updated\n'
+    else
+      # Clear any accumulated failure state from previous boots before starting.
+      systemctl --user reset-failed cobien-launcher.service >/dev/null 2>&1 || true
+      printf '[COBIEN] Starting cobien-launcher.service with imported session environment\n'
+      systemctl --user start cobien-launcher.service >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+
+exit 0
+ENVEOF
+    chmod +x "$SCRIPT_DIR/import-systemd-user-env.sh"
+    chown "$TARGET_USER:$TARGET_USER" "$SCRIPT_DIR/import-systemd-user-env.sh" 2>/dev/null || true
+
+    # Create systemd template dir and files required by launcher validations at runtime
+    mkdir -p "$SCRIPT_DIR/systemd"
+    cat > "$SCRIPT_DIR/systemd/cobien-launcher.service" <<'EOF'
+[Unit]
+Description=CoBien Launcher (main runtime)
+After=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+WorkingDirectory=%h/cobien/cobien-furniture-app-launcher
+EnvironmentFile=-%h/cobien/cobien-furniture-app-launcher/cobien.env
+Environment=COBIEN_LAUNCHER_ROOT=%h/cobien/cobien-furniture-app-launcher
+ExecStart=/bin/bash -lc 'exec "$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode launch --non-interactive --yes'
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=20
+EOF
+
+    cat > "$SCRIPT_DIR/systemd/cobien-update.service" <<'EOF'
+[Unit]
+Description=CoBien one-shot update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/cobien/cobien-furniture-app-launcher
+EnvironmentFile=-%h/cobien/cobien-furniture-app-launcher/cobien.env
+Environment=COBIEN_LAUNCHER_ROOT=%h/cobien/cobien-furniture-app-launcher
+ExecStart=/bin/bash -lc 'exec "$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'
+EOF
+
+    cat > "$SCRIPT_DIR/systemd/cobien-update.timer" <<'EOF'
+[Unit]
+Description=Run CoBien update check daily at 01:00
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+RandomizedDelaySec=300
+Unit=cobien-update.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    chown -R "$TARGET_USER:$TARGET_USER" "$SCRIPT_DIR/systemd" 2>/dev/null || true
+
+    # Write live services into systemd user configurations
     cat > "$systemd_user_dir/cobien-launcher.service" <<EOF
 [Unit]
 Description=CoBien Launcher (main runtime)
@@ -1725,8 +1818,19 @@ Environment="COBIEN_UPDATE_BRANCH=$BRANCH_NAME"
 ExecStart=/bin/bash -lc 'exec "\$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'
 EOF
 
-    install -m 0644 -o "$TARGET_USER" -g "$TARGET_USER" \
-        "$SCRIPT_DIR/systemd/cobien-update.timer" "$systemd_user_dir/cobien-update.timer"
+    cat > "$systemd_user_dir/cobien-update.timer" <<EOF
+[Unit]
+Description=Run CoBien update check daily at 01:00
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+RandomizedDelaySec=300
+Unit=cobien-update.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
     rm -rf "$systemd_override_dir"
     rm -f "$graphical_wants_dir/cobien-launcher.service"
 
