@@ -2551,11 +2551,25 @@ import os
 import sys
 
 config_file, version_file, legacy_config_file = sys.argv[1:4]
-app_dir = os.path.dirname(version_file)
-if app_dir not in sys.path:
-    sys.path.insert(0, app_dir)
 
-from config_runtime import PRESERVED_LOCAL_CONFIG_KEYS
+PRESERVED_LOCAL_CONFIG_KEYS = {
+    "settings": [
+        "weather_cities",
+        "weather_city_catalog",
+        "weather_primary_city",
+        "button_colors",
+        "rfid_actions",
+        "microphone_device",
+        "audio_output_device",
+        "joke_category",
+        "idle_timeout_sec",
+    ],
+    "notifications": [
+        "videollamada",
+        "nuevo_evento",
+        "nueva_foto",
+    ],
+}
 
 def env(name, default=""):
     return os.getenv(name, default)
