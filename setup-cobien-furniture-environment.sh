@@ -609,7 +609,7 @@ _download_env_from_portal() {
         log INFO "curl is missing but required to connect to the CoBien admin portal. Installing it now..."
         wait_for_apt_lock
         run_cmd "Updating apt metadata" sudo apt update
-        run_cmd "Installing curl" sudo apt install -y curl
+        run_cmd "Installing curl" sudo DEBIAN_FRONTEND=noninteractive apt install -y curl
     fi
 
     while true; do
@@ -1059,7 +1059,8 @@ install_missing_bootstrap_packages() {
         log INFO "Missing bootstrap packages: ${missing_packages[*]}"
         wait_for_apt_lock
         run_cmd "Updating apt metadata" sudo apt update
-        run_cmd "Installing missing packages" sudo apt install -y "${missing_packages[@]}"
+        run_cmd "Preconfiguring lightdm as default display manager" bash -c "echo 'shared/default-x-display-manager select lightdm' | sudo debconf-set-selections"
+        run_cmd "Installing missing packages" sudo DEBIAN_FRONTEND=noninteractive apt install -y "${missing_packages[@]}"
     else
         log INFO "All required bootstrap packages are already installed."
     fi
@@ -1069,7 +1070,7 @@ install_missing_bootstrap_packages() {
         log INFO "Node.js not found. Installing Node.js v22 from NodeSource..."
         wait_for_apt_lock
         run_cmd "Configuring NodeSource repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
-        run_cmd "Installing Node.js and NPM" sudo apt install -y nodejs
+        run_cmd "Installing Node.js and NPM" sudo DEBIAN_FRONTEND=noninteractive apt install -y nodejs
     else
         print_status_badge OK "Node.js already installed: $(node -v)"
     fi
@@ -1594,7 +1595,7 @@ install_rustdesk() {
     fi
 
     wait_for_apt_lock
-    run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo apt install -y "$deb_path"
+    run_cmd "Installing RustDesk ${RUSTDESK_VERSION}" sudo DEBIAN_FRONTEND=noninteractive apt install -y "$deb_path"
     rm -rf "$tmp_dir"
 
     if [[ ! -x /usr/bin/rustdesk ]]; then
