@@ -1016,7 +1016,7 @@ installed_apt_package_version() {
 # On a freshly booted Ubuntu VM unattended-upgrades often starts immediately
 # and holds the lock for several minutes, causing apt to exit with code 100.
 wait_for_apt_lock() {
-    local max_wait=300
+    local max_wait=150
     local waited=0
     local interval=5
 
