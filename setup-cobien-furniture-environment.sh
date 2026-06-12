@@ -1430,8 +1430,32 @@ EOF
     cat > "$USER_HOME/.config/cobien/openbox-session.sh" <<EOF
 #!/usr/bin/env bash
 
+    # Resolve display settings dynamically from env files
+    _env_candidate=""
+    _rot=""
+    _mode=""
+    _out=""
+    _sleep=""
+    for _env_candidate in \
+        "\$HOME/cobien/cobien-furniture-app-launcher/cobien.env" \
+        "\$HOME/cobien/cobien.env" \
+        "/home/${TARGET_USER}/cobien/cobien-furniture-app-launcher/cobien.env"; do
+        if [ -f "\$_env_candidate" ]; then
+            _rot="\$(grep -m1 '^COBIEN_DISPLAY_ROTATION=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
+            _mode="\$(grep -m1 '^COBIEN_DISPLAY_MODE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
+            _out="\$(grep -m1 '^COBIEN_DISPLAY_OUTPUT=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
+            _sleep="\$(grep -m1 '^COBIEN_DISABLE_SYSTEM_SLEEP=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
+            break
+        fi
+    done
+
+    display_rotation="\${_rot:-${DISPLAY_ROTATION}}"
+    display_mode="\${_mode:-${DISPLAY_MODE}}"
+    display_output_cfg="\${_out:-${DISPLAY_OUTPUT}}"
+    disable_system_sleep="\${_sleep:-${DISABLE_SYSTEM_SLEEP}}"
+
     resolve_display_output() {
-        local configured_output="${DISPLAY_OUTPUT}"
+        local configured_output="\$display_output_cfg"
         local connected_outputs fallback_output
 
         connected_outputs="\$({ xrandr --query 2>/dev/null || true; } | awk '\$2 == "connected" {print \$1}')"
@@ -1452,7 +1476,7 @@ EOF
         local output_line
         output_line="\$(xrandr --query 2>/dev/null | awk -v out="\$display_output" '\$1 == out && \$2 == "connected" {print; exit}')"
         case " \$output_line " in
-            *" ${DISPLAY_ROTATION} "*) return 0 ;;
+            *" \$display_rotation "*) return 0 ;;
             *) return 1 ;;
         esac
     }
@@ -1460,14 +1484,14 @@ EOF
     apply_display_rotation() {
         local display_output attempt
         display_output="\$(resolve_display_output)"
-        echo "[apply_display_rotation] Configured=${DISPLAY_OUTPUT} resolved=\$display_output mode=${DISPLAY_MODE} rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-display.log
+        echo "[apply_display_rotation] Configured=\$display_output_cfg resolved=\$display_output mode=\$display_mode rotation=\$display_rotation" >>/tmp/cobien-display.log
         if [ -z "\$display_output" ]; then
             echo "[apply_display_rotation] No connected output detected via xrandr" >>/tmp/cobien-display.log
             return 0
         fi
 
         for attempt in 1 2 3; do
-            xrandr --output "\$display_output" --mode ${DISPLAY_MODE} --rotate ${DISPLAY_ROTATION} >>/tmp/cobien-display.log 2>&1 || true
+            xrandr --output "\$display_output" --mode "\$display_mode" --rotate "\$display_rotation" >>/tmp/cobien-display.log 2>&1 || true
             if is_display_rotation_applied "\$display_output"; then
                 echo "[apply_display_rotation] Rotation applied on attempt \$attempt" >>/tmp/cobien-display.log
                 return 0
@@ -1481,19 +1505,19 @@ EOF
 apply_touch_rotation() {
     local matrix
     local touch_ids
-        local display_output
+    local display_output
 
     if ! command -v xinput >/dev/null 2>&1; then
         return 0
     fi
 
-        display_output="\$(resolve_display_output)"
-        if [ -z "\$display_output" ]; then
-            echo "[apply_touch_rotation] No output available for touchscreen mapping" >>/tmp/cobien-touchscreen.log
-            return 0
-        fi
+    display_output="\$(resolve_display_output)"
+    if [ -z "\$display_output" ]; then
+        echo "[apply_touch_rotation] No output available for touchscreen mapping" >>/tmp/cobien-touchscreen.log
+        return 0
+    fi
 
-    case "${DISPLAY_ROTATION}" in
+    case "\$display_rotation" in
         left)
             matrix="0 -1 1 1 0 0 0 0 1"
             ;;
@@ -1510,17 +1534,17 @@ apply_touch_rotation() {
 
     touch_ids="\$(
         xinput list 2>/dev/null \
-            | awk -F'id=' '/[Tt]ouch/ {split(\$2, a, /[[:space:]]+/); print a[1]}'
+            | awk -F'id=' '/[Tt]ouch|[Tt]ablet/ {split(\$2, a, /[[:space:]]+/); print a[1]}'
     )"
 
     if [ -z "\$touch_ids" ]; then
-        echo "[apply_touch_rotation] No touchscreen device found via xinput" >>/tmp/cobien-touchscreen.log
+        echo "[apply_touch_rotation] No touchscreen/tablet device found via xinput" >>/tmp/cobien-touchscreen.log
         return 0
     fi
 
     printf '%s\n' "\$touch_ids" | while IFS= read -r touch_id; do
         [ -n "\$touch_id" ] || continue
-        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=\$display_output rotation=${DISPLAY_ROTATION}" >>/tmp/cobien-touchscreen.log
+        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=\$display_output rotation=\$display_rotation" >>/tmp/cobien-touchscreen.log
         xinput map-to-output "\$touch_id" "\$display_output" >>/tmp/cobien-touchscreen.log 2>&1 || true
         read -ra mat_arr <<< "\$matrix"
         xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' "\${mat_arr[@]}" >>/tmp/cobien-touchscreen.log 2>&1 || true
@@ -1555,7 +1579,7 @@ apply_touch_rotation
     apply_touch_rotation
 ) >/tmp/cobien-touchscreen.log 2>&1 &
 
-if [ "${DISABLE_SYSTEM_SLEEP}" = "1" ] && command -v xset >/dev/null 2>&1; then
+if [ "\$disable_system_sleep" = "1" ] && command -v xset >/dev/null 2>&1; then
   xset s off >/tmp/cobien-xset.log 2>&1 || true
   xset -dpms >/tmp/cobien-xset.log 2>&1 || true
   xset s noblank >/tmp/cobien-xset.log 2>&1 || true
