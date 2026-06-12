@@ -63,8 +63,18 @@ RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:---tray}"
 AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
 CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-ask}"
 
-FRONTEND_REPO="https://github.com/DeustoTech/${FRONTEND_REPO_NAME}.git"
-MQTT_REPO="https://github.com/DeustoTech/${MQTT_REPO_NAME}.git"
+get_git_base_url() {
+    local remote_url
+    remote_url="$(git -C "$SCRIPT_DIR" config --get remote.origin.url 2>/dev/null || true)"
+    if [[ "$remote_url" == git@github.com:* ]]; then
+        printf 'git@github.com:DeustoTech'
+    else
+        printf 'https://github.com/DeustoTech'
+    fi
+}
+
+FRONTEND_REPO="$(get_git_base_url)/${FRONTEND_REPO_NAME}.git"
+MQTT_REPO="$(get_git_base_url)/${MQTT_REPO_NAME}.git"
 
 COLOR_RESET=""
 COLOR_BOLD=""
@@ -298,8 +308,8 @@ load_selected_env_settings() {
     RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:-$RUSTDESK_ARGS}"
     AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-$AUTO_REBOOT_AFTER_SETUP}"
 
-    FRONTEND_REPO="https://github.com/DeustoTech/${FRONTEND_REPO_NAME}.git"
-    MQTT_REPO="https://github.com/DeustoTech/${MQTT_REPO_NAME}.git"
+    FRONTEND_REPO="$(get_git_base_url)/${FRONTEND_REPO_NAME}.git"
+    MQTT_REPO="$(get_git_base_url)/${MQTT_REPO_NAME}.git"
 }
 
 add_env_candidate() {
