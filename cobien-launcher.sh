@@ -2443,9 +2443,22 @@ configure_tts_runtime() {
     return 1
   fi
 
-  if [[ -n "$TTS_PIPER_BIN" && -f "$TTS_PIPER_BIN" && ! -x "$TTS_PIPER_BIN" ]]; then
-    chmod a+rx "$TTS_PIPER_BIN" 2>/dev/null || \
-      { can_perform_privileged_installs && sudo chmod a+rx "$TTS_PIPER_BIN" 2>/dev/null; } || true
+  local run_user="${COBIEN_CAN_SUDOERS_USER:-${SUDO_USER:-}}"
+  if [[ -n "$TTS_PIPER_BIN" && -f "$TTS_PIPER_BIN" ]]; then
+    local is_ok="0"
+    if [[ -n "$run_user" && "$run_user" != "root" ]]; then
+      if sudo -u "$run_user" test -x "$TTS_PIPER_BIN" 2>/dev/null; then
+        is_ok="1"
+      fi
+    else
+      if [[ -x "$TTS_PIPER_BIN" ]]; then
+        is_ok="1"
+      fi
+    fi
+    if [[ "$is_ok" != "1" ]]; then
+      chmod a+rx "$TTS_PIPER_BIN" 2>/dev/null || \
+        { can_perform_privileged_installs && sudo chmod a+rx "$TTS_PIPER_BIN" 2>/dev/null; } || true
+    fi
   fi
 
   if [[ -z "$TTS_PIPER_BIN" || ! -x "$TTS_PIPER_BIN" ]]; then
