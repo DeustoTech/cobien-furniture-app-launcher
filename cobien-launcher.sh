@@ -1877,8 +1877,7 @@ checkout_branch() {
 apt_get_locked() {
   # apt-get uses POSIX (fcntl) locks on /var/lib/apt/lists/lock, which are
   # independent of BSD flock. A flock -n test always succeeds even while
-  # apt-get is running. We therefore wait for the process to finish instead,
-  # and retry the apt-get call when it still exits with 100 (lock race).
+  # apt-get is running. We therefore wait for the process to finish instead.
   local waited=0
   while pgrep -xE "apt-get|dpkg|apt|unattended-upgrade|unattended-upgr" >/dev/null 2>&1; do
     if [[ $waited -ge 300 ]]; then
@@ -1889,17 +1888,7 @@ apt_get_locked() {
     sleep 5
     waited=$((waited + 5))
   done
-  local attempt=0 exit_code=0
-  while (( attempt < 12 )); do
-    exit_code=0
-    sudo apt-get -o DPkg::Lock::Timeout=120 "$@" || exit_code=$?
-    [[ $exit_code -eq 0 ]] && return 0
-    [[ $exit_code -ne 100 ]] && return $exit_code
-    attempt=$(( attempt + 1 ))
-    log "APT: Lock still held after process check (attempt ${attempt}/12), retrying in 10s..."
-    sleep 10
-  done
-  return $exit_code
+  sudo apt-get -o DPkg::Lock::Timeout=120 "$@"
 }
 
 install_system_deps_fn() {
