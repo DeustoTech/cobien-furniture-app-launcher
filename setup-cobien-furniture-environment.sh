@@ -1020,7 +1020,7 @@ wait_for_apt_lock() {
     local waited=0
     local interval=5
 
-    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/debconf/config.dat >/dev/null 2>&1; do
         if [[ "$waited" -eq 0 ]]; then
             log INFO "dpkg/apt lock is held by another process (likely unattended-upgrades). Waiting up to ${max_wait}s..."
         fi
