@@ -653,10 +653,27 @@ read_lock_pid() {
   fi
 }
 
+is_descendant_of() {
+  local descendant="$1"
+  local ancestor="$2"
+  local parent
+  while [[ -n "$descendant" && "$descendant" != "1" ]]; do
+    parent=$(awk '{print $4}' "/proc/$descendant/stat" 2>/dev/null || true)
+    if [[ "$parent" == "$ancestor" ]]; then
+      return 0
+    fi
+    descendant="$parent"
+  done
+  return 1
+}
+
 discover_running_launcher_pid() {
   local candidate
   while IFS= read -r candidate; do
     if [[ -n "$candidate" && "$candidate" != "$$" && "$candidate" != "$PPID" ]]; then
+      if is_descendant_of "$candidate" "$$"; then
+        continue
+      fi
       echo "$candidate"
       return 0
     fi
@@ -668,6 +685,9 @@ discover_running_launcher_pids() {
   local candidate
   while IFS= read -r candidate; do
     if [[ -n "$candidate" && "$candidate" != "$$" && "$candidate" != "$PPID" ]]; then
+      if is_descendant_of "$candidate" "$$"; then
+        continue
+      fi
       echo "$candidate"
     fi
   done < <(pgrep -f "cobien-launcher.sh" 2>/dev/null || true)
