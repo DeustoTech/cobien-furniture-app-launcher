@@ -337,6 +337,7 @@ install_master_env_file() {
     if [[ "$source_abs" != "$target_abs" ]]; then
         cp "$source_env" "$target_env"
         chmod 600 "$target_env"
+        chown "$TARGET_USER:$TARGET_USER" "$target_env" 2>/dev/null || true
         log OK "Installed deployment env as canonical file: $target_env"
     fi
 
@@ -727,6 +728,7 @@ _download_env_from_portal() {
     fi
     rm -f "$env_curl_err"
     chmod 600 "$target_env"
+    chown "$TARGET_USER:$TARGET_USER" "$target_env" 2>/dev/null || true
 
     MASTER_ENV_FILE="$target_env"
     FETCH_CONFIG_ONLINE="1"
@@ -1871,7 +1873,9 @@ fix_target_runtime_ownership() {
         "$USER_HOME/.config" \
         "$USER_HOME/.cache" \
         "$USER_HOME/.local" \
-        "$USER_HOME/.xbindkeysrc"
+        "$USER_HOME/.xbindkeysrc" \
+        "$USER_HOME/cobien.env" \
+        "$SCRIPT_DIR/cobien.env"
     do
         [[ -e "$path" || -L "$path" ]] || continue
         chown -R "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true

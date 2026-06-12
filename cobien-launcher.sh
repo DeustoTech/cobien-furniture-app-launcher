@@ -1954,10 +1954,12 @@ ensure_runtime_dependencies() {
   command -v xrandr >/dev/null 2>&1 || append_missing_apt_package "x11-xserver-utils" missing_packages
   append_missing_apt_package "pipewire-pulse" missing_packages
   append_missing_apt_package "wireplumber" missing_packages
-  command -v mosquitto >/dev/null 2>&1 || {
-    append_missing_apt_package "mosquitto" missing_packages
-    append_missing_apt_package "mosquitto-clients" missing_packages
-  }
+  if [[ ! -f "$WORKSPACE_ROOT/mosquitto/docker-compose.yml" ]]; then
+    command -v mosquitto >/dev/null 2>&1 || {
+      append_missing_apt_package "mosquitto" missing_packages
+      append_missing_apt_package "mosquitto-clients" missing_packages
+    }
+  fi
 
   if [[ "${#missing_packages[@]}" -gt 0 ]]; then
     log "Missing runtime dependencies detected: ${missing_packages[*]}"
