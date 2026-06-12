@@ -2768,6 +2768,11 @@ import os, stat
 os.chmod(config_file, stat.S_IRUSR | stat.S_IWUSR)
 PY
 
+  # Sync configuration to Electron's userData path
+  local electron_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/cobien-furniture-electron"
+  mkdir -p "$electron_config_dir"
+  cp -f "$unified_config_file" "$electron_config_dir/config.local.json"
+
   log "Device identity synced: language='$APP_LANGUAGE', device_id='$DEVICE_ID', videocall_room='$VIDEOCALL_ROOM', videocall_key='configured', location='$DEVICE_LOCATION', tts_engine='$TTS_ENGINE'"
 }
 
