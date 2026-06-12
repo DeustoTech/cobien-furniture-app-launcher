@@ -1437,8 +1437,10 @@ EOF
     _out=""
     _sleep=""
     for _env_candidate in \
+        "\$HOME/cobien.env" \
         "\$HOME/cobien/cobien-furniture-app-launcher/cobien.env" \
         "\$HOME/cobien/cobien.env" \
+        "/home/${TARGET_USER}/cobien.env" \
         "/home/${TARGET_USER}/cobien/cobien-furniture-app-launcher/cobien.env"; do
         if [ -f "\$_env_candidate" ]; then
             _rot="\$(grep -m1 '^COBIEN_DISPLAY_ROTATION=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
@@ -1473,12 +1475,14 @@ EOF
 
     is_display_rotation_applied() {
         local display_output="\$1"
-        local output_line
+        local output_line active_rot
         output_line="\$(xrandr --query 2>/dev/null | awk -v out="\$display_output" '\$1 == out && \$2 == "connected" {print; exit}')"
-        case " \$output_line " in
-            *" \$display_rotation "*) return 0 ;;
-            *) return 1 ;;
-        esac
+        active_rot="\$(echo "\$output_line" | awk '{for(i=1;i<=NF;i++) if(\$i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+\$/) {next_val=\$(i+1); if(next_val ~ /^\\\(/) print \"normal\"; else print next_val}}')"
+        if [ "\$active_rot" = "\$display_rotation" ]; then
+            return 0
+        else
+            return 1
+        fi
     }
 
     apply_display_rotation() {
@@ -1553,8 +1557,10 @@ apply_touch_rotation() {
 
 _cobien_language=""
 for _env_candidate in \
+    "\$HOME/cobien.env" \
     "\$HOME/cobien/cobien-furniture-app-launcher/cobien.env" \
     "\$HOME/cobien/cobien.env" \
+    "/home/${TARGET_USER}/cobien.env" \
     "/home/${TARGET_USER}/cobien/cobien-furniture-app-launcher/cobien.env"; do
     if [ -f "\$_env_candidate" ]; then
         _cobien_language="\$(grep -m1 '^COBIEN_APP_LANGUAGE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')" || true
