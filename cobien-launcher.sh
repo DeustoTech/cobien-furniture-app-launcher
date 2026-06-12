@@ -2055,10 +2055,14 @@ configure_tts_runtime() {
 
     extracted_dir="$runtime_dir/piper"
     if [[ -x "$extracted_dir/piper" ]]; then
-      TTS_PIPER_BIN="$extracted_dir/piper"
+      # Also create a stable symlink in ~/.local/bin so future runs detect it immediately.
+      local user_bin_dir="$HOME/.local/bin"
+      mkdir -p "$user_bin_dir"
+      ln -sf "$extracted_dir/piper" "$user_bin_dir/piper"
+      TTS_PIPER_BIN="$user_bin_dir/piper"
       TTS_PIPER_PROVIDER="user"
       TTS_PIPER_VERSION="$($TTS_PIPER_BIN --version 2>/dev/null | sed -n '1p' || true)"
-      log "Piper runtime installed at: $TTS_PIPER_BIN"
+      log "Piper runtime installed at: $extracted_dir/piper (symlinked from $TTS_PIPER_BIN)"
       return 0
     fi
 
