@@ -596,6 +596,13 @@ _download_env_from_portal() {
     local target_env="$SCRIPT_DIR/cobien.env"
     local max_attempts=4 attempt=0
 
+    if ! command -v curl >/dev/null 2>&1; then
+        log INFO "curl is missing but required to connect to the CoBien admin portal. Installing it now..."
+        wait_for_apt_lock
+        run_cmd "Updating apt metadata" sudo apt update
+        run_cmd "Installing curl" sudo apt install -y curl
+    fi
+
     while true; do
         attempt=$(( attempt + 1 ))
 
