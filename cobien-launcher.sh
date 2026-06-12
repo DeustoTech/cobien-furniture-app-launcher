@@ -2099,7 +2099,7 @@ configure_tts_runtime() {
     fi
 
     dest_bin="/usr/local/bin/piper"
-    if sudo sh -c "mkdir -p /usr/local/bin && cp '$piper_found' '$dest_bin' && chmod +x '$dest_bin'"; then
+    if sudo sh -c "mkdir -p /usr/local/bin && cp '$piper_found' '$dest_bin' && chmod 755 '$dest_bin'"; then
       log "Piper installed to: $dest_bin"
       TTS_PIPER_BIN="$dest_bin"
       TTS_PIPER_PROVIDER="system"
@@ -2444,8 +2444,8 @@ configure_tts_runtime() {
   fi
 
   if [[ -n "$TTS_PIPER_BIN" && -f "$TTS_PIPER_BIN" && ! -x "$TTS_PIPER_BIN" ]]; then
-    chmod +x "$TTS_PIPER_BIN" 2>/dev/null || \
-      { can_perform_privileged_installs && sudo chmod +x "$TTS_PIPER_BIN" 2>/dev/null; } || true
+    chmod a+rx "$TTS_PIPER_BIN" 2>/dev/null || \
+      { can_perform_privileged_installs && sudo chmod a+rx "$TTS_PIPER_BIN" 2>/dev/null; } || true
   fi
 
   if [[ -z "$TTS_PIPER_BIN" || ! -x "$TTS_PIPER_BIN" ]]; then
