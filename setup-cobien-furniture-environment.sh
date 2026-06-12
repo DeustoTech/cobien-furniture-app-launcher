@@ -617,19 +617,31 @@ _download_env_from_portal() {
         log INFO "Connecting to CoBien admin: ${ADMIN_BASE_URL}"
         devices_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/"
         tmp_json="$(mktemp)"
+        local curl_err
+        curl_err="$(mktemp)"
 
         animate "Downloading the furniture list from the CoBien admin"
         if curl -fsS --config - -o "$tmp_json" "$devices_url" \
-                <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+                <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>"$curl_err"; then
+            rm -f "$curl_err"
             break
         fi
 
+        local err_msg
+        err_msg="$(cat "$curl_err")"
+        rm -f "$curl_err"
         rm -f "$tmp_json"
         if [[ "$attempt" -ge "$max_attempts" ]]; then
             log WARN "Could not log in after ${max_attempts} attempts. Continuing without online configuration."
+            if [[ -n "$err_msg" ]]; then
+                log WARN "Last curl error: $err_msg"
+            fi
             return 1
         fi
         log WARN "Could not reach the CoBien admin or credentials are incorrect. Please try again."
+        if [[ -n "$err_msg" ]]; then
+            log WARN "Curl error: $err_msg"
+        fi
     done
 
     if [[ -n "$TARGET_DEVICE_ID" ]]; then
@@ -665,12 +677,21 @@ _download_env_from_portal() {
     fi
 
     device_env_url="${ADMIN_BASE_URL}/pizarra/api/admin/devices/${selected_device}/cobien-env/"
+    local env_curl_err
+    env_curl_err="$(mktemp)"
     animate "Downloading cobien.env for ${selected_device}"
     if ! curl -fsS --config - -o "$target_env" "$device_env_url" \
-            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>/dev/null; then
+            <<< "$(_curl_config_credentials "$ADMIN_USERNAME" "$ADMIN_PASSWORD")" 2>"$env_curl_err"; then
+        local env_err_msg
+        env_err_msg="$(cat "$env_curl_err")"
+        rm -f "$env_curl_err"
         log WARN "Could not download the configuration for ${selected_device}."
+        if [[ -n "$env_err_msg" ]]; then
+            log WARN "Curl error: $env_err_msg"
+        fi
         return 1
     fi
+    rm -f "$env_curl_err"
     chmod 600 "$target_env"
 
     MASTER_ENV_FILE="$target_env"
