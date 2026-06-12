@@ -419,8 +419,7 @@ preflight_checks() {
     if command -v git >/dev/null 2>&1; then
         print_status_badge OK "git is available"
     else
-        print_status_badge ERROR "git is missing"
-        missing=1
+        print_status_badge INFO "git is missing (will be installed automatically)"
     fi
 
     if command -v sudo >/dev/null 2>&1; then
@@ -440,14 +439,24 @@ preflight_checks() {
     if command -v curl >/dev/null 2>&1; then
         print_status_badge OK "curl is available"
     else
-        print_status_badge ERROR "curl is missing"
-        missing=1
+        print_status_badge INFO "curl is missing (will be installed automatically)"
     fi
 
-    if [[ -x "$SCRIPT_DIR/cobien-launcher.sh" ]]; then
-        print_status_badge OK "cobien-launcher.sh is present"
+    if [[ -f "$SCRIPT_DIR/cobien-launcher.sh" ]]; then
+        if [[ -x "$SCRIPT_DIR/cobien-launcher.sh" ]]; then
+            print_status_badge OK "cobien-launcher.sh is present and executable"
+        else
+            print_status_badge INFO "cobien-launcher.sh is present but not executable. Making it executable..."
+            chmod +x "$SCRIPT_DIR/cobien-launcher.sh" || true
+            if [[ -x "$SCRIPT_DIR/cobien-launcher.sh" ]]; then
+                print_status_badge OK "cobien-launcher.sh is now executable"
+            else
+                print_status_badge ERROR "cobien-launcher.sh could not be made executable"
+                missing=1
+            fi
+        fi
     else
-        print_status_badge ERROR "cobien-launcher.sh is missing"
+        print_status_badge ERROR "cobien-launcher.sh is missing from $SCRIPT_DIR"
         missing=1
     fi
 
