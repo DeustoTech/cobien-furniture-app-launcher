@@ -68,6 +68,8 @@ get_git_base_url() {
     remote_url="$(git -C "$SCRIPT_DIR" config --get remote.origin.url 2>/dev/null || true)"
     if [[ "$remote_url" == git@github.com:* ]]; then
         printf 'git@github.com:DeustoTech'
+    elif [[ -n "${COBIEN_GITHUB_TOKEN:-}" ]]; then
+        printf 'https://%s@github.com/DeustoTech' "$COBIEN_GITHUB_TOKEN"
     else
         printf 'https://github.com/DeustoTech'
     fi
