@@ -1023,11 +1023,17 @@ wait_for_apt_lock() {
 
     while true; do
         if command -v fuser >/dev/null 2>&1; then
-            fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/debconf/config.dat >/dev/null 2>&1
-            lock_held=$?
+            if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/debconf/config.dat >/dev/null 2>&1; then
+                lock_held=0
+            else
+                lock_held=1
+            fi
         else
-            pgrep -x "dpkg" >/dev/null || pgrep -f "unattended-upgrades|apt-get|dpkg-preconfigure" >/dev/null
-            lock_held=$?
+            if pgrep -x "dpkg" >/dev/null || pgrep -f "unattended-upgrades|apt-get|dpkg-preconfigure" >/dev/null; then
+                lock_held=0
+            else
+                lock_held=1
+            fi
         fi
 
         # lock_held is 0 if lock is found/process is running
