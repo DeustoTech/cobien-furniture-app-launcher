@@ -1443,10 +1443,10 @@ EOF
         "/home/${TARGET_USER}/cobien.env" \
         "/home/${TARGET_USER}/cobien/cobien-furniture-app-launcher/cobien.env"; do
         if [ -f "\$_env_candidate" ]; then
-            _rot="\$(grep -m1 '^COBIEN_DISPLAY_ROTATION=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
-            _mode="\$(grep -m1 '^COBIEN_DISPLAY_MODE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
-            _out="\$(grep -m1 '^COBIEN_DISPLAY_OUTPUT=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
-            _sleep="\$(grep -m1 '^COBIEN_DISABLE_SYSTEM_SLEEP=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '\"' | tr -d \"'\" | tr -d '[:space:]')" || true
+            _rot="\$(grep -m1 '^COBIEN_DISPLAY_ROTATION=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
+            _mode="\$(grep -m1 '^COBIEN_DISPLAY_MODE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
+            _out="\$(grep -m1 '^COBIEN_DISPLAY_OUTPUT=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
+            _sleep="\$(grep -m1 '^COBIEN_DISABLE_SYSTEM_SLEEP=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
             break
         fi
     done
@@ -1477,7 +1477,7 @@ EOF
         local display_output="\$1"
         local output_line active_rot
         output_line="\$(xrandr --query 2>/dev/null | awk -v out="\$display_output" '\$1 == out && \$2 == "connected" {print; exit}')"
-        active_rot="\$(echo "\$output_line" | awk '{for(i=1;i<=NF;i++) if(\$i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+\$/) {next_val=\$(i+1); if(next_val ~ /^\\\(/) print \"normal\"; else print next_val}}')"
+        active_rot="\$(echo "\$output_line" | awk -v norm="normal" '{for(i=1;i<=NF;i++) if(\$i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+\$/) {next_val=\$(i+1); if(next_val ~ /^\(/) print norm; else print next_val}}')"
         if [ "\$active_rot" = "\$display_rotation" ]; then
             return 0
         else
