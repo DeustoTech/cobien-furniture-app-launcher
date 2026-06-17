@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
+export GIT_TERMINAL_PROMPT=0
 
 if [ "${COBIEN_ALLOW_SYSTEM_PROVISIONING:-}" != "yes" ]; then
     echo "[ERROR] This script is blocked by default to prevent accidental execution on development machines."
