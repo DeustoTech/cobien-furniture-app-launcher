@@ -72,9 +72,7 @@ AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
 CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-ask}"
 
 get_git_base_url() {
-    local remote_url
-    remote_url="$(git -C "$SCRIPT_DIR" config --get remote.origin.url 2>/dev/null || true)"
-    if [[ "$remote_url" == git@github.com:* ]]; then
+    if [[ "${COBIEN_USE_SSH:-}" =~ ^(yes|true|1)$ ]]; then
         printf 'git@github.com:DeustoTech'
     elif [[ -n "${COBIEN_GITHUB_TOKEN:-}" ]]; then
         printf 'https://%s@github.com/DeustoTech' "$COBIEN_GITHUB_TOKEN"
