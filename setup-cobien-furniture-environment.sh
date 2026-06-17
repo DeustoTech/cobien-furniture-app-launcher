@@ -1220,6 +1220,8 @@ ensure_repo() {
         (
             cd "$repo_dir"
             sudo -u "$TARGET_USER" git remote set-url origin "$repo_url" 2>/dev/null || true
+            sudo -u "$TARGET_USER" git reset --hard HEAD 2>/dev/null || true
+            sudo -u "$TARGET_USER" git clean -fd 2>/dev/null || true
             run_cmd "Fetching ${repo_label}" sudo -u "$TARGET_USER" git fetch origin "$BRANCH_NAME"
             run_cmd "Checking out ${BRANCH_NAME} from origin/${BRANCH_NAME}" sudo -u "$TARGET_USER" git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
             run_cmd "Resetting ${repo_label} to origin/${BRANCH_NAME}" sudo -u "$TARGET_USER" git reset --hard "origin/$BRANCH_NAME"
