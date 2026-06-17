@@ -1219,6 +1219,7 @@ ensure_repo() {
         chown -R "$TARGET_USER:$TARGET_USER" "$repo_dir" 2>/dev/null || true
         (
             cd "$repo_dir"
+            sudo -u "$TARGET_USER" git remote set-url origin "$repo_url" 2>/dev/null || true
             run_cmd "Fetching ${repo_label}" sudo -u "$TARGET_USER" git fetch origin "$BRANCH_NAME"
             run_cmd "Checking out ${BRANCH_NAME} from origin/${BRANCH_NAME}" sudo -u "$TARGET_USER" git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
             run_cmd "Resetting ${repo_label} to origin/${BRANCH_NAME}" sudo -u "$TARGET_USER" git reset --hard "origin/$BRANCH_NAME"
