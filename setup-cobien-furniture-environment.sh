@@ -47,6 +47,7 @@ USER_NAME="$TARGET_USER"
 USER_HOME="$TARGET_HOME"
 
 PROJECT_DIR="${COBIEN_WORKSPACE_ROOT:-$USER_HOME/cobien}"
+LAUNCHER_REPO_DIR="$PROJECT_DIR/cobien-furniture-app-launcher"
 FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-cobien-furniture-electron}"
 MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-cobien_MQTT_Dictionnary}"
 BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-master}"
@@ -1443,10 +1444,10 @@ EOF
         "/home/${TARGET_USER}/cobien.env" \
         "/home/${TARGET_USER}/cobien/cobien-furniture-app-launcher/cobien.env"; do
         if [ -f "\$_env_candidate" ]; then
-            _rot="\$(grep -m1 '^COBIEN_DISPLAY_ROTATION=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
-            _mode="\$(grep -m1 '^COBIEN_DISPLAY_MODE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
-            _out="\$(grep -m1 '^COBIEN_DISPLAY_OUTPUT=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
-            _sleep="\$(grep -m1 '^COBIEN_DISABLE_SYSTEM_SLEEP=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | sed \"s/[\\\"']//g\" | tr -d '[:space:]')" || true
+            _rot="\$(grep -m1 '^COBIEN_DISPLAY_ROTATION=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')" || true
+            _mode="\$(grep -m1 '^COBIEN_DISPLAY_MODE=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')" || true
+            _out="\$(grep -m1 '^COBIEN_DISPLAY_OUTPUT=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')" || true
+            _sleep="\$(grep -m1 '^COBIEN_DISABLE_SYSTEM_SLEEP=' "\$_env_candidate" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d '[:space:]')" || true
             break
         fi
     done
@@ -1594,8 +1595,8 @@ fi
 pgrep -u "${USER_NAME}" pipewire >/dev/null || pipewire >/tmp/cobien-pipewire.log 2>&1 &
 pgrep -u "${USER_NAME}" wireplumber >/dev/null || wireplumber >/tmp/cobien-wireplumber.log 2>&1 &
 
-if [ -x "${SCRIPT_DIR}/import-systemd-user-env.sh" ]; then
-  "${SCRIPT_DIR}/import-systemd-user-env.sh" >/tmp/cobien-import-session-env.log 2>&1 || true
+if [ -x "${LAUNCHER_REPO_DIR}/import-systemd-user-env.sh" ]; then
+  "${LAUNCHER_REPO_DIR}/import-systemd-user-env.sh" >/tmp/cobien-import-session-env.log 2>&1 || true
 fi
 
 if [ "${INSTALL_RUSTDESK}" = "1" ] && [ -x "/usr/bin/rustdesk" ]; then
@@ -1659,6 +1660,9 @@ autologin-user=${USER_NAME}
 autologin-session=openbox
 EOF
     sudo chmod 0644 /etc/lightdm/lightdm.conf.d/50-autologin.conf || true
+
+    # Force LightDM as the default display manager
+    echo "/usr/sbin/lightdm" | sudo tee /etc/X11/default-display-manager >/dev/null || true
 }
 
 disable_other_display_managers() {
@@ -1725,7 +1729,7 @@ install_systemd_user_units() {
     fi
 
     # Create/recreate import-systemd-user-env.sh locally in launcher root
-    cat > "$SCRIPT_DIR/import-systemd-user-env.sh" <<'ENVEOF'
+    cat > "$LAUNCHER_REPO_DIR/import-systemd-user-env.sh" <<'ENVEOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1763,12 +1767,12 @@ fi
 
 exit 0
 ENVEOF
-    chmod +x "$SCRIPT_DIR/import-systemd-user-env.sh"
-    chown "$TARGET_USER:$TARGET_USER" "$SCRIPT_DIR/import-systemd-user-env.sh" 2>/dev/null || true
+    chmod +x "$LAUNCHER_REPO_DIR/import-systemd-user-env.sh"
+    chown "$TARGET_USER:$TARGET_USER" "$LAUNCHER_REPO_DIR/import-systemd-user-env.sh" 2>/dev/null || true
 
     # Create systemd template dir and files required by launcher validations at runtime
-    mkdir -p "$SCRIPT_DIR/systemd"
-    cat > "$SCRIPT_DIR/systemd/cobien-launcher.service" <<'EOF'
+    mkdir -p "$LAUNCHER_REPO_DIR/systemd"
+    cat > "$LAUNCHER_REPO_DIR/systemd/cobien-launcher.service" <<'EOF'
 [Unit]
 Description=CoBien Launcher (main runtime)
 After=network-online.target
@@ -1787,7 +1791,7 @@ KillMode=mixed
 TimeoutStopSec=20
 EOF
 
-    cat > "$SCRIPT_DIR/systemd/cobien-update.service" <<'EOF'
+    cat > "$LAUNCHER_REPO_DIR/systemd/cobien-update.service" <<'EOF'
 [Unit]
 Description=CoBien one-shot update check
 After=network-online.target
@@ -1801,7 +1805,7 @@ Environment=COBIEN_LAUNCHER_ROOT=%h/cobien/cobien-furniture-app-launcher
 ExecStart=/bin/bash -lc 'exec "$COBIEN_LAUNCHER_ROOT/cobien-launcher.sh" --mode update-once --non-interactive --yes'
 EOF
 
-    cat > "$SCRIPT_DIR/systemd/cobien-update.timer" <<'EOF'
+    cat > "$LAUNCHER_REPO_DIR/systemd/cobien-update.timer" <<'EOF'
 [Unit]
 Description=Run CoBien update check daily at 01:00
 
@@ -1814,7 +1818,7 @@ Unit=cobien-update.service
 WantedBy=timers.target
 EOF
 
-    chown -R "$TARGET_USER:$TARGET_USER" "$SCRIPT_DIR/systemd" 2>/dev/null || true
+    chown -R "$TARGET_USER:$TARGET_USER" "$LAUNCHER_REPO_DIR/systemd" 2>/dev/null || true
 
     # Write live services into systemd user configurations
     cat > "$systemd_user_dir/cobien-launcher.service" <<EOF
@@ -1826,9 +1830,9 @@ StartLimitIntervalSec=60
 
 [Service]
 Type=simple
-WorkingDirectory=$SCRIPT_DIR
-EnvironmentFile=-$SCRIPT_DIR/cobien.env
-Environment="COBIEN_LAUNCHER_ROOT=$SCRIPT_DIR"
+WorkingDirectory=$LAUNCHER_REPO_DIR
+EnvironmentFile=-$LAUNCHER_REPO_DIR/cobien.env
+Environment="COBIEN_LAUNCHER_ROOT=$LAUNCHER_REPO_DIR"
 Environment="COBIEN_WORKSPACE_ROOT=$PROJECT_DIR"
 Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
 Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
@@ -1848,9 +1852,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=$SCRIPT_DIR
-EnvironmentFile=-$SCRIPT_DIR/cobien.env
-Environment="COBIEN_LAUNCHER_ROOT=$SCRIPT_DIR"
+WorkingDirectory=$LAUNCHER_REPO_DIR
+EnvironmentFile=-$LAUNCHER_REPO_DIR/cobien.env
+Environment="COBIEN_LAUNCHER_ROOT=$LAUNCHER_REPO_DIR"
 Environment="COBIEN_WORKSPACE_ROOT=$PROJECT_DIR"
 Environment="COBIEN_FRONTEND_REPO_NAME=$FRONTEND_REPO_NAME"
 Environment="COBIEN_MQTT_REPO_NAME=$MQTT_REPO_NAME"
@@ -1879,7 +1883,7 @@ EOF
 Type=Application
 Name=CoBien Session Env Import
 Comment=Import graphical session variables into systemd user services
-Exec=/bin/bash $SCRIPT_DIR/import-systemd-user-env.sh
+Exec=/bin/bash $LAUNCHER_REPO_DIR/import-systemd-user-env.sh
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=2
 X-XFCE-Autostart-enabled=true
@@ -1911,7 +1915,8 @@ fix_target_runtime_ownership() {
         "$USER_HOME/.local" \
         "$USER_HOME/.xbindkeysrc" \
         "$USER_HOME/cobien.env" \
-        "$SCRIPT_DIR/cobien.env"
+        "$SCRIPT_DIR/cobien.env" \
+        "$LAUNCHER_REPO_DIR/cobien.env"
     do
         [[ -e "$path" || -L "$path" ]] || continue
         chown -R "$TARGET_USER:$TARGET_USER" "$path" 2>/dev/null || true
@@ -1920,7 +1925,7 @@ fix_target_runtime_ownership() {
 
 run_launcher_setup_mode() {
     local launcher_cmd=(
-        "$SCRIPT_DIR/cobien-launcher.sh"
+        "$LAUNCHER_REPO_DIR/cobien-launcher.sh"
         --mode setup
         --non-interactive
         --yes
@@ -1933,7 +1938,7 @@ run_launcher_setup_mode() {
     # If cobien.env was previously generated as root it may contain a stale
     # COBIEN_WORKSPACE_ROOT pointing to /root. Strip it so the launcher's
     # --workspace argument wins unconditionally.
-    local master_env="${MASTER_ENV_FILE:-$SCRIPT_DIR/cobien.env}"
+    local master_env="${MASTER_ENV_FILE:-$LAUNCHER_REPO_DIR/cobien.env}"
     if [[ -f "$master_env" ]]; then
         sed -i '/^COBIEN_WORKSPACE_ROOT=/d' "$master_env"
         sed -i '/^COBIEN_FRONTEND_REPO_NAME=.*cobien_FrontEnd.*/d' "$master_env"
@@ -2269,8 +2274,21 @@ main() {
     configure_mqtt_broker_docker
 
     phase "Syncing repositories" "The production repositories will be cloned or updated on branch ${BRANCH_NAME}."
+    local launcher_repo
+    launcher_repo="$(get_git_base_url)/cobien-furniture-app-launcher.git"
+    ensure_repo "$LAUNCHER_REPO_DIR" "$launcher_repo" "app launcher"
     ensure_repo "$PROJECT_DIR/$FRONTEND_REPO_NAME" "$FRONTEND_REPO" "frontend"
     ensure_repo "$PROJECT_DIR/$MQTT_REPO_NAME" "$MQTT_REPO" "mqtt dictionary"
+
+    # Copy cobien.env to the canonical location inside launcher repo
+    if [[ -f "$SCRIPT_DIR/cobien.env" ]]; then
+        if [[ "$SCRIPT_DIR" != "$LAUNCHER_REPO_DIR" ]]; then
+            cp "$SCRIPT_DIR/cobien.env" "$LAUNCHER_REPO_DIR/cobien.env"
+            chmod 600 "$LAUNCHER_REPO_DIR/cobien.env"
+            chown "$TARGET_USER:$TARGET_USER" "$LAUNCHER_REPO_DIR/cobien.env" 2>/dev/null || true
+            log OK "Copied cobien.env to canonical location: $LAUNCHER_REPO_DIR/cobien.env"
+        fi
+    fi
 
     phase "Configuring the desktop session" "LightDM autologin and Openbox autostart will be prepared."
     run_cmd "Disabling other display managers if present" disable_other_display_managers
