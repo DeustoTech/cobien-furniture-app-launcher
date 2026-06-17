@@ -53,7 +53,7 @@ FRONTEND_REPO_NAME="${COBIEN_FRONTEND_REPO_NAME:-cobien-furniture-electron}"
 MQTT_REPO_NAME="${COBIEN_MQTT_REPO_NAME:-cobien_MQTT_Dictionnary}"
 BRANCH_NAME="${COBIEN_UPDATE_BRANCH:-master}"
 DISPLAY_OUTPUT="${COBIEN_DISPLAY_OUTPUT:-eDP-1}"
-DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-1920x1200}"
+DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-auto}"
 DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-inverted}"
 DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-1}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
@@ -1500,7 +1500,11 @@ EOF
         fi
 
         for attempt in 1 2 3; do
-            xrandr --output "\$display_output" --mode "\$display_mode" --rotate "\$display_rotation" >>/tmp/cobien-display.log 2>&1 || true
+            if [ "\$display_mode" = "auto" ] || [ -z "\$display_mode" ]; then
+                xrandr --output "\$display_output" --auto --rotate "\$display_rotation" >>/tmp/cobien-display.log 2>&1 || true
+            else
+                xrandr --output "\$display_output" --mode "\$display_mode" --rotate "\$display_rotation" >>/tmp/cobien-display.log 2>&1 || true
+            fi
             if is_display_rotation_applied "\$display_output"; then
                 echo "[apply_display_rotation] Rotation applied on attempt \$attempt" >>/tmp/cobien-display.log
                 return 0
