@@ -1663,6 +1663,7 @@ write_lightdm_config() {
 autologin-user=${USER_NAME}
 autologin-session=openbox
 autologin-user-timeout=0
+display-setup-script=chvt 7
 EOF
     sudo chmod 0644 /etc/lightdm/lightdm.conf.d/50-autologin.conf || true
 
