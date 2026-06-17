@@ -112,6 +112,7 @@ BOOTSTRAP_APT_PACKAGES=(
     xserver-xorg
     openbox
     lightdm
+    lightdm-gtk-greeter
     dunst
     xbindkeys
     libnotify-bin
