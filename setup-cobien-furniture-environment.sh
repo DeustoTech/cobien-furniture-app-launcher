@@ -1221,10 +1221,10 @@ ensure_repo() {
         chown -R "$TARGET_USER:$TARGET_USER" "$repo_dir" 2>/dev/null || true
         (
             cd "$repo_dir"
-            run_cmd "Fetching ${repo_label}" git fetch origin "$BRANCH_NAME"
-            run_cmd "Checking out ${BRANCH_NAME} from origin/${BRANCH_NAME}" git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
-            run_cmd "Resetting ${repo_label} to origin/${BRANCH_NAME}" git reset --hard "origin/$BRANCH_NAME"
-            run_cmd "Removing untracked non-ignored files from ${repo_label}" git clean -fd
+            run_cmd "Fetching ${repo_label}" sudo -u "$TARGET_USER" git fetch origin "$BRANCH_NAME"
+            run_cmd "Checking out ${BRANCH_NAME} from origin/${BRANCH_NAME}" sudo -u "$TARGET_USER" git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
+            run_cmd "Resetting ${repo_label} to origin/${BRANCH_NAME}" sudo -u "$TARGET_USER" git reset --hard "origin/$BRANCH_NAME"
+            run_cmd "Removing untracked non-ignored files from ${repo_label}" sudo -u "$TARGET_USER" git clean -fd
         )
         _verify_repo_sync "$repo_dir" "$repo_label"
         _report_repo_artifacts "$repo_dir" "$repo_label"
@@ -1234,14 +1234,14 @@ ensure_repo() {
         if [[ "$AUTO_CONFIRM" == "1" ]] || confirm "Remove '$(basename "$repo_dir")' and reclone from scratch?"; then
             run_cmd "Removing non-git directory ${repo_dir}" rm -rf "$repo_dir"
             run_cmd "Cloning ${repo_label} into $(basename "$repo_dir")" \
-                git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
+                sudo -u "$TARGET_USER" git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
         else
             log WARN "${repo_label}: skipping — cannot use a non-git directory."
             return 1
         fi
     else
         run_cmd "Cloning ${repo_label} into $(basename "$repo_dir")" \
-            git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
+            sudo -u "$TARGET_USER" git clone --branch "$BRANCH_NAME" --single-branch "$repo_url" "$repo_dir"
     fi
     # Ensure all repo files are owned by the target user regardless of who ran git.
     chown -R "$TARGET_USER:$TARGET_USER" "$repo_dir" 2>/dev/null || true
