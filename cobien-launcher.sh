@@ -1924,7 +1924,7 @@ install_system_deps_fn() {
     libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4
     libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0
     libxcomposite1 libxdamage1 libxrandr2 libnss3
-    libatk-bridge2.0-0 libgtk-3-0
+    libatk-bridge2.0-0 libgtk-3-0 libgbm1
     dunst libnotify-bin xbindkeys
     x11-xserver-utils xinput
   )

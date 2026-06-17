@@ -110,6 +110,7 @@ BOOTSTRAP_APT_PACKAGES=(
     build-essential
     docker.io
     docker-compose-v2
+    xserver-xorg
     openbox
     lightdm
     dunst
@@ -1658,16 +1659,27 @@ write_lightdm_config() {
 [Seat:*]
 autologin-user=${USER_NAME}
 autologin-session=openbox
+autologin-user-timeout=0
 EOF
     sudo chmod 0644 /etc/lightdm/lightdm.conf.d/50-autologin.conf || true
+
+    # Ensure target user is in the nopasswdlogin group for autologin
+    if ! getent group nopasswdlogin >/dev/null 2>&1; then
+        sudo groupadd -r nopasswdlogin || true
+    fi
+    sudo usermod -aG nopasswdlogin "${USER_NAME}" || true
 
     # Force LightDM as the default display manager
     echo "/usr/sbin/lightdm" | sudo tee /etc/X11/default-display-manager >/dev/null || true
 }
 
 disable_other_display_managers() {
+    sudo systemctl disable gdm 2>/dev/null || true
     sudo systemctl disable gdm3 2>/dev/null || true
     sudo systemctl disable sddm 2>/dev/null || true
+    sudo systemctl stop gdm 2>/dev/null || true
+    sudo systemctl stop gdm3 2>/dev/null || true
+    sudo systemctl stop sddm 2>/dev/null || true
 }
 
 install_rustdesk() {
@@ -2293,6 +2305,7 @@ main() {
     phase "Configuring the desktop session" "LightDM autologin and Openbox autostart will be prepared."
     run_cmd "Disabling other display managers if present" disable_other_display_managers
     run_cmd "Enabling LightDM" sudo systemctl enable lightdm
+    run_cmd "Setting default target to graphical.target" sudo systemctl set-default graphical.target
     run_cmd "Writing LightDM autologin" write_lightdm_config
     run_cmd "Writing Openbox autostart" write_openbox_autostart
     run_cmd "Applying kiosk power policy" configure_kiosk_power_management
