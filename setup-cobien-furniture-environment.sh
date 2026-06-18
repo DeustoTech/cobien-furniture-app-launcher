@@ -375,11 +375,8 @@ discover_env_candidates() {
 }
 
 choose_master_env_file() {
-    fetch_online_master_env_file
-
-    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
-        install_master_env_file "$MASTER_ENV_FILE"
-        return 0
+    if [[ "$FETCH_CONFIG_ONLINE" == "1" ]]; then
+        _download_env_from_portal && return 0
     fi
 
     discover_env_candidates
@@ -390,9 +387,18 @@ choose_master_env_file() {
     fi
 
     if [[ ${#ENV_CANDIDATES[@]} -eq 0 ]]; then
-        log WARN "No deployment env candidates were found automatically."
+        if [[ "$NON_INTERACTIVE" == "1" ]]; then
+            log WARN "No local configuration was found and non-interactive mode is active."
+            return 0
+        fi
+        if confirm "No local configuration was found. Do you want to download a new configuration from the CoBien admin portal?"; then
+            _download_env_from_portal && return 0
+        fi
+        log WARN "No deployment env was selected. Continuing without preselecting a deployment env."
         return 0
-    elif [[ ${#ENV_CANDIDATES[@]} -eq 1 ]]; then
+    fi
+
+    if [[ ${#ENV_CANDIDATES[@]} -eq 1 ]]; then
         install_master_env_file "${ENV_CANDIDATES[0]}"
         log OK "Automatically selected the only env candidate found: $MASTER_ENV_FILE"
         return 0
@@ -750,25 +756,6 @@ _download_env_from_portal() {
     return 0
 }
 
-fetch_online_master_env_file() {
-    # Skip silently if already resolved or in non-interactive unattended mode.
-    if [[ -n "$MASTER_ENV_FILE" && -f "$MASTER_ENV_FILE" ]]; then
-        return 0
-    fi
-
-    if [[ "$FETCH_CONFIG_ONLINE" == "1" ]]; then
-        _download_env_from_portal
-        return
-    fi
-
-    if [[ "$NON_INTERACTIVE" == "1" && "$AUTO_CONFIRM" != "1" ]]; then
-        return 0
-    fi
-
-    if confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
-        _download_env_from_portal || true
-    fi
-}
 
 run_cmd() {
     local description="$1"
