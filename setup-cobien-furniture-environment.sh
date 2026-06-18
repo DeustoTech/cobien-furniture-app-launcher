@@ -2032,7 +2032,9 @@ finalize_with_reboot() {
     if [[ "$AUTO_REBOOT_AFTER_SETUP" == "1" ]]; then
         print_status_badge INFO "The system will reboot in 10 seconds. Press Ctrl+C now if you want to stop it."
         sleep 10
-        sudo reboot
+        # Use systemctl reboot with --ignore-inhibitors (-i) to force reboot
+        # even if GNOME/GDM3 is running and trying to block the reboot.
+        sudo systemctl reboot -i 2>/dev/null || sudo reboot -f 2>/dev/null || reboot
     else
         print_status_badge INFO "Automatic reboot disabled. Run 'sudo reboot' when you are ready."
     fi
