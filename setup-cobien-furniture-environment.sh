@@ -729,6 +729,10 @@ _download_env_from_portal() {
     chmod 600 "$target_env"
     chown "$TARGET_USER:$TARGET_USER" "$target_env" 2>/dev/null || true
 
+    # Strip legacy frontend repo name to force migration to Electron
+    sed -i '/^COBIEN_FRONTEND_REPO_NAME=.*cobien_FrontEnd.*/d' "$target_env"
+    unset COBIEN_FRONTEND_REPO_NAME
+
     MASTER_ENV_FILE="$target_env"
     FETCH_CONFIG_ONLINE="1"
     ONLINE_ENV_FETCHED=1
@@ -933,6 +937,9 @@ collect_legacy_cleanup_candidates() {
     local service_file
     local service_name
 
+    add_legacy_cleanup_candidate \
+        "$PROJECT_DIR/cobien_FrontEnd" \
+        "legacy python frontend repository directory"
     add_legacy_cleanup_candidate \
         "$frontend_app_dir/config/config.local.json" \
         "legacy per-device config inside the frontend repository"
