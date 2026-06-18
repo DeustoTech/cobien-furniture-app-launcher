@@ -64,7 +64,7 @@ MONGO_URI="${MONGO_URI:-}"
 PIZARRA_NOTIFY_URL="${COBIEN_PIZARRA_NOTIFY_URL:-}"
 PIZARRA_API_URL="${COBIEN_PIZARRA_API_URL:-}"
 PIZARRA_DELETE_URL_TEMPLATE="${COBIEN_PIZARRA_DELETE_URL_TEMPLATE:-}"
-CONTACTS_API_URL="${COBIEN_CONTACTS_API_URL:-}"
+CONTACTS_API_URL="${COBIEN_CONTACTS_API_URL:-}"  # fallback set later
 ICSO_TELEMETRY_URL="${COBIEN_ICSO_TELEMETRY_URL:-}"
 ICSO_EVENTS_URL="${COBIEN_ICSO_EVENTS_URL:-}"
 DEVICE_VIDEOCALL_SESSION_URL="${COBIEN_DEVICE_VIDEOCALL_SESSION_URL:-}"
@@ -474,6 +474,9 @@ run_full_install_plan() {
   set_phase "load-configuration"
   log_section "[2/4] Loading configuration"
   load_env_file
+  if [[ -z "$DEVICE_ID" ]]; then
+    log "ERROR: COBIEN_DEVICE_ID not set. Please set CO Bien device ID in .env or via --device-id."; exit 1
+  fi
 
   set_phase "verify-configuration"
   log_section "[3/4] Verifying configuration"

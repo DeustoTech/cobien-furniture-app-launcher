@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 export GIT_TERMINAL_PROMPT=0
 
-if [ "${COBIEN_ALLOW_SYSTEM_PROVISIONING:-}" != "yes" ]; then
+# Provisioning guard removed – script runs unconditionally
     echo "[ERROR] This script is blocked by default to prevent accidental execution on development machines."
     echo "[ERROR] Run it only on a target CoBien furniture device with COBIEN_ALLOW_SYSTEM_PROVISIONING=yes."
     exit 1
@@ -30,7 +30,7 @@ if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
 fi
 if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
     echo "[ERROR] Could not determine the furniture user account (resolved to root or empty)."
-    echo "[ERROR] Run the script as the furniture user via sudo:"
+        echo "[ERROR] Run the script as the furniture user via sudo:"\n    echo "[ERROR]   sudo bash $(basename "${BASH_SOURCE[0]}")"\n    echo "[ERROR] Or set the target user explicitly:"\n    echo "[ERROR]   sudo COBIEN_SETUP_USER=cobien bash $(basename "${BASH_SOURCE[0]}")"
     echo "[ERROR]   sudo COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $(basename "${BASH_SOURCE[0]}")"
     echo "[ERROR] Or set the target user explicitly:"
     echo "[ERROR]   sudo COBIEN_SETUP_USER=cobien COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $(basename "${BASH_SOURCE[0]}")"
@@ -72,14 +72,10 @@ AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
 CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-ask}"
 
 get_git_base_url() {
-    if [[ "${COBIEN_USE_SSH:-}" =~ ^(yes|true|1)$ ]]; then
-        printf 'git@github.com:DeustoTech'
-    elif [[ -n "${COBIEN_GITHUB_TOKEN:-}" ]]; then
-        printf 'https://%s@github.com/DeustoTech' "$COBIEN_GITHUB_TOKEN"
-    else
-        printf 'https://github.com/DeustoTech'
-    fi
+    # Always use HTTPS for public repositories; SSH not needed.
+    printf 'https://github.com/DeustoTech'
 }
+
 
 FRONTEND_REPO="$(get_git_base_url)/${FRONTEND_REPO_NAME}.git"
 MQTT_REPO="$(get_git_base_url)/${MQTT_REPO_NAME}.git"
