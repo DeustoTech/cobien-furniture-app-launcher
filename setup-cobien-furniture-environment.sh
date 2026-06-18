@@ -483,8 +483,7 @@ preflight_checks() {
             fi
         fi
     else
-        print_status_badge ERROR "cobien-launcher.sh is missing from $SCRIPT_DIR"
-        missing=1
+        print_status_badge INFO "cobien-launcher.sh not present in SCRIPT_DIR (will be synced from repository)"
     fi
 
     if [[ -n "$MASTER_ENV_FILE" ]]; then
