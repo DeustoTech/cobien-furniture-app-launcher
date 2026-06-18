@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Automatically elevate privileges if not running as root, assuming password 'cobien'
 if [[ $EUID -ne 0 ]]; then
-    echo "cobien" | sudo -S bash "$0" "$@"
-    exit $?
+    echo "cobien" | sudo -S -v >/dev/null 2>&1
+    exec sudo -E bash "$0" "$@"
 fi
 set -Eeuo pipefail
 umask 077
@@ -765,8 +765,9 @@ fetch_online_master_env_file() {
         return 0
     fi
 
-    # Auto-fetch configuration (default yes)
+    if confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
         _download_env_from_portal || true
+    fi
 }
 
 run_cmd() {
