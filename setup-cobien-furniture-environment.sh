@@ -1674,7 +1674,14 @@ EOF
     fi
     sudo usermod -aG nopasswdlogin "${USER_NAME}" || true
 
-    # Force LightDM as the default display manager
+    # Force LightDM as the default display manager in debconf and reconfigure
+    if command -v debconf-set-selections >/dev/null 2>&1; then
+        echo "lightdm shared/default-x-display-manager select lightdm" | sudo debconf-set-selections 2>/dev/null || true
+        echo "gdm3 shared/default-x-display-manager select lightdm" | sudo debconf-set-selections 2>/dev/null || true
+    fi
+    sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure lightdm 2>/dev/null || true
+
+    # Force LightDM as the default display manager via X11 config
     echo "/usr/sbin/lightdm" | sudo tee /etc/X11/default-display-manager >/dev/null || true
 }
 
@@ -2349,7 +2356,7 @@ main() {
     phase "Configuring the desktop session" "LightDM autologin and Openbox autostart will be prepared."
     run_cmd "Disabling cloud-init if present" disable_cloud_init
     run_cmd "Disabling other display managers if present" disable_other_display_managers
-    run_cmd "Enabling LightDM" sudo systemctl enable lightdm
+    run_cmd "Enabling LightDM" sudo systemctl enable --force lightdm
     run_cmd "Setting default target to graphical.target" sudo systemctl set-default graphical.target
     run_cmd "Writing LightDM autologin" write_lightdm_config
     run_cmd "Writing Openbox autostart" write_openbox_autostart
