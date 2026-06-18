@@ -1674,15 +1674,13 @@ EOF
     fi
     sudo usermod -aG nopasswdlogin "${USER_NAME}" || true
 
-    # Force LightDM as the default display manager in debconf and reconfigure
-    if command -v debconf-set-selections >/dev/null 2>&1; then
-        echo "lightdm shared/default-x-display-manager select lightdm" | sudo debconf-set-selections 2>/dev/null || true
-        echo "gdm3 shared/default-x-display-manager select lightdm" | sudo debconf-set-selections 2>/dev/null || true
-    fi
-    sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure lightdm 2>/dev/null || true
-
     # Force LightDM as the default display manager via X11 config
     echo "/usr/sbin/lightdm" | sudo tee /etc/X11/default-display-manager >/dev/null || true
+
+    # Update systemd symlink manually to point to LightDM.
+    # This registers it as the default display manager for the next boot
+    # WITHOUT restarting systemd/gdm in the middle of our script.
+    sudo ln -sfn /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
 }
 
 disable_other_display_managers() {
