@@ -2244,11 +2244,17 @@ configure_mqtt_broker_docker() {
     local mosquitto_dir="$PROJECT_DIR/mosquitto"
     local config_dir="$mosquitto_dir/config"
 
+    # Stop and remove the container first to release any active mounts/locks on the files
+    if command -v docker >/dev/null 2>&1; then
+        sudo docker stop cobien-mosquitto >/dev/null 2>&1 || true
+        sudo docker rm cobien-mosquitto >/dev/null 2>&1 || true
+    fi
+
     run_cmd "Creating Mosquitto config directory" mkdir -p "$config_dir"
     
     # If mosquitto.conf exists and is a directory (created by Docker when mount source is missing), remove it.
     if [[ -d "$config_dir/mosquitto.conf" ]]; then
-        rm -rf "$config_dir/mosquitto.conf"
+        sudo rm -rf "$config_dir/mosquitto.conf"
     fi
 
     # Write mosquitto.conf

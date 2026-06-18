@@ -217,6 +217,12 @@ main() {
         _systemctl_user daemon-reload || true
     fi
 
+    # Stop and remove Mosquitto Docker container to release active folder mounts
+    if command -v docker >/dev/null 2>&1; then
+        run_cmd "Stopping local Mosquitto MQTT container" sudo docker stop cobien-mosquitto 2>/dev/null || true
+        run_cmd "Removing local Mosquitto MQTT container" sudo docker rm cobien-mosquitto 2>/dev/null || true
+    fi
+
     # Step 2: Clean up configuration folders
     phase "Removing CoBien user configurations" "Cleaning up Openbox, Dunst, xbindkeys, and helper scripts."
     
