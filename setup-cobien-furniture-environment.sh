@@ -115,6 +115,7 @@ BOOTSTRAP_APT_PACKAGES=(
     pipewire
     pipewire-pulse
     wireplumber
+    openssh-server
 )
 
 init_colors() {
