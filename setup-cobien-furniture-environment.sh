@@ -3,12 +3,6 @@ set -Eeuo pipefail
 umask 077
 export GIT_TERMINAL_PROMPT=0
 
-# Provisioning guard removed – script runs unconditionally
-    echo "[ERROR] This script is blocked by default to prevent accidental execution on development machines."
-    echo "[ERROR] Run it only on a target CoBien furniture device with COBIEN_ALLOW_SYSTEM_PROVISIONING=yes."
-    exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -30,10 +24,10 @@ if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
 fi
 if [[ -z "$TARGET_USER" || "$TARGET_USER" == "root" ]]; then
     echo "[ERROR] Could not determine the furniture user account (resolved to root or empty)."
-        echo "[ERROR] Run the script as the furniture user via sudo:"\n    echo "[ERROR]   sudo bash $(basename "${BASH_SOURCE[0]}")"\n    echo "[ERROR] Or set the target user explicitly:"\n    echo "[ERROR]   sudo COBIEN_SETUP_USER=cobien bash $(basename "${BASH_SOURCE[0]}")"
-    echo "[ERROR]   sudo COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $(basename "${BASH_SOURCE[0]}")"
+    echo "[ERROR] Run the script as the furniture user via sudo:"
+    echo "[ERROR]   sudo bash $(basename "${BASH_SOURCE[0]}")"
     echo "[ERROR] Or set the target user explicitly:"
-    echo "[ERROR]   sudo COBIEN_SETUP_USER=cobien COBIEN_ALLOW_SYSTEM_PROVISIONING=yes bash $(basename "${BASH_SOURCE[0]}")"
+    echo "[ERROR]   sudo COBIEN_SETUP_USER=cobien bash $(basename "${BASH_SOURCE[0]}")"
     exit 1
 fi
 
