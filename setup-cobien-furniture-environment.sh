@@ -51,12 +51,12 @@ DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-1920x1200}"
 DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-inverted}"
 DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-1}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
-AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
+AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-1}"
 MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-}"
 FETCH_CONFIG_ONLINE="${COBIEN_FETCH_CONFIG_ONLINE:-0}"
 ADMIN_BASE_URL="${COBIEN_ADMIN_BASE_URL:-https://portal.co-bien.eu}"
-ADMIN_USERNAME="${COBIEN_ADMIN_USERNAME:-}"
-ADMIN_PASSWORD="${COBIEN_ADMIN_PASSWORD:-}"
+ADMIN_USERNAME="${COBIEN_ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${COBIEN_ADMIN_PASSWORD:-Icam31!!}"
 TARGET_DEVICE_ID="${COBIEN_TARGET_DEVICE_ID:-}"
 INSTALL_RUSTDESK="${COBIEN_INSTALL_RUSTDESK:-1}"
 RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-1.4.6}"
@@ -639,8 +639,9 @@ _download_env_from_portal() {
 
         ADMIN_BASE_URL="$(prompt_text "CoBien admin base URL" "$ADMIN_BASE_URL")"
         ADMIN_BASE_URL="$(normalize_admin_base_url "$ADMIN_BASE_URL")"
-        ADMIN_USERNAME="$(prompt_text "Admin username" "$ADMIN_USERNAME")"
-        ADMIN_PASSWORD="$(prompt_secret "Admin password")"
+        # Admin credentials are pre‑filled via defaults; no interactive prompt needed
+        # ADMIN_USERNAME already set
+        # ADMIN_PASSWORD already set
 
         if [[ -z "$ADMIN_BASE_URL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
             log WARN "Online configuration skipped: admin URL or credentials are incomplete."
