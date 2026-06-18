@@ -1689,9 +1689,6 @@ disable_other_display_managers() {
     sudo systemctl disable gdm 2>/dev/null || true
     sudo systemctl disable gdm3 2>/dev/null || true
     sudo systemctl disable sddm 2>/dev/null || true
-    sudo systemctl stop gdm 2>/dev/null || true
-    sudo systemctl stop gdm3 2>/dev/null || true
-    sudo systemctl stop sddm 2>/dev/null || true
 }
 
 disable_cloud_init() {
