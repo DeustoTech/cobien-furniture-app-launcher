@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Automatically elevate privileges if not running as root, assuming password 'cobien'
+if [[ $EUID -ne 0 ]]; then
+    echo "cobien" | sudo -S bash "$0" "$@"
+    exit $?
+fi
 set -Eeuo pipefail
 umask 077
 export GIT_TERMINAL_PROMPT=0
@@ -63,7 +68,7 @@ RUSTDESK_VERSION="${COBIEN_RUSTDESK_VERSION:-1.4.6}"
 RUSTDESK_URL="${COBIEN_RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/${RUSTDESK_VERSION}/rustdesk-${RUSTDESK_VERSION}-x86_64.deb}"
 RUSTDESK_ARGS="${COBIEN_RUSTDESK_ARGS:---tray}"
 AUTO_REBOOT_AFTER_SETUP="${COBIEN_AUTO_REBOOT_AFTER_SETUP:-1}"
-CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-ask}"
+CLEAN_LEGACY_ARTIFACTS="${COBIEN_CLEAN_LEGACY_ARTIFACTS:-1}"
 
 get_git_base_url() {
     # Always use HTTPS for public repositories; SSH not needed.
@@ -386,6 +391,10 @@ choose_master_env_file() {
 
     if [[ ${#ENV_CANDIDATES[@]} -eq 0 ]]; then
         log WARN "No deployment env candidates were found automatically."
+        return 0
+    elif [[ ${#ENV_CANDIDATES[@]} -eq 1 ]]; then
+        install_master_env_file "${ENV_CANDIDATES[0]}"
+        log OK "Automatically selected the only env candidate found: $MASTER_ENV_FILE"
         return 0
     fi
 
@@ -2316,14 +2325,7 @@ main() {
     load_selected_env_settings
     print_preflight_snapshot
 
-    if [[ "$ONLINE_ENV_FETCHED" == "1" ]]; then
-        log INFO "Online deployment env downloaded successfully. Continuing with unattended setup."
-    else
-        if ! confirm "Continue with the full furniture environment setup?"; then
-            log WARN "Setup cancelled by the user."
-            exit 0
-        fi
-    fi
+    log INFO "Starting the full furniture environment setup..."
 
     phase "Checking prerequisites" "Verifying the installer tools and the selected deployment env before changing the system."
     if ! preflight_checks; then
