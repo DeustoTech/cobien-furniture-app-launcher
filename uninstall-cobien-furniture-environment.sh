@@ -62,7 +62,7 @@ init_colors() {
 }
 
 print_header() {
-    clear
+    clear 2>/dev/null || true
     print_rule
     printf '%b%s%b\n' "${COLOR_BOLD}${COLOR_BLUE}" "CoBien Furniture Environment Uninstaller" "${COLOR_RESET}"
     print_rule
