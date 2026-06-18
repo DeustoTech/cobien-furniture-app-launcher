@@ -1688,24 +1688,20 @@ disable_other_display_managers() {
 }
 
 disable_cloud_init() {
-    # cloud-init is present on Ubuntu cloud/server images and runs during
-    # early boot, generating SSH keys and writing console output that
-    # prevents LightDM from starting the graphical session cleanly.
-    # It is not needed on CoBien furniture devices, so we purge it completely.
+    # cloud-init is a cloud VM initialization tool that sometimes runs during
+    # the first boot of a fresh Ubuntu install, generating SSH keys and writing
+    # to the console. On CoBien furniture devices (physical laptops/PCs) we
+    # don't need it at all.
     #
-    # IMPORTANT: cloud-init may be actively running when this function is
-    # called (e.g. still generating SSH host keys). We must stop and kill it
-    # BEFORE attempting the apt purge, otherwise apt blocks waiting for the
-    # process to finish and the console floods with cloud-init log output.
+    # We disable it by creating the official cloud-init "disabled" marker file.
+    # Cloud-init checks for this file at startup and skips all its work
+    # if found — no apt-get purge needed, no process killing, no blocking.
 
-    # Step 1: Suppress cloud-init console output immediately so it stops
-    # flooding the terminal even if the process is still alive.
-    mkdir -p /etc/cloud/cloud.cfg.d/ 2>/dev/null || true
-    cat > /etc/cloud/cloud.cfg.d/99-cobien-disable.cfg 2>/dev/null <<'EOF'
-output: {all: '| tee -a /var/log/cloud-init-cobien.log'}
-EOF
+    # Create the official "disabled" marker recognized by cloud-init itself.
+    touch /etc/cloud/cloud-init.disabled 2>/dev/null || true
 
-    # Step 2: Stop all cloud-init systemd units gracefully.
+    # Mask the systemd units so they cannot start on boot even if the marker
+    # is somehow removed or the cloud-init package is reinstalled later.
     local _ci_units=(
         cloud-init-main.service
         cloud-init-network.service
@@ -1713,47 +1709,16 @@ EOF
         cloud-config.service
         cloud-final.service
         cloud-init.service
-        cloud-init.target
     )
     for _unit in "${_ci_units[@]}"; do
         if [[ $EUID -ne 0 ]]; then
-            sudo -n systemctl stop "$_unit" 2>/dev/null || true
-            sudo -n systemctl disable "$_unit" 2>/dev/null || true
             sudo -n systemctl mask "$_unit" 2>/dev/null || true
         else
-            systemctl stop "$_unit" 2>/dev/null || true
-            systemctl disable "$_unit" 2>/dev/null || true
             systemctl mask "$_unit" 2>/dev/null || true
         fi
     done
 
-    # Step 3: Kill any still-running cloud-init processes.
-    if command -v pkill >/dev/null 2>&1; then
-        if [[ $EUID -ne 0 ]]; then
-            sudo -n pkill -TERM -f 'cloud-init' 2>/dev/null || true
-            sleep 1
-            sudo -n pkill -KILL -f 'cloud-init' 2>/dev/null || true
-        else
-            pkill -TERM -f 'cloud-init' 2>/dev/null || true
-            sleep 1
-            pkill -KILL -f 'cloud-init' 2>/dev/null || true
-        fi
-    fi
-
-    # Step 4: Now purge the package safely (no blocking process left).
-    if dpkg -l cloud-init >/dev/null 2>&1; then
-        log INFO "Purging cloud-init to avoid boot delays and console interference."
-        if [[ $EUID -ne 0 ]]; then
-            sudo -n DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null || true
-            sudo -n rm -rf /etc/cloud/ /var/lib/cloud/ 2>/dev/null || true
-        else
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y cloud-init 2>/dev/null || true
-            rm -rf /etc/cloud/ /var/lib/cloud/ 2>/dev/null || true
-        fi
-        print_status_badge OK "cloud-init purged and removed"
-    else
-        log INFO "cloud-init not found; nothing to purge."
-    fi
+    print_status_badge OK "cloud-init disabled (marker file + systemd mask)"
 
     # Also mask serial-getty and text console getty on tty1 to avoid
     # conflicts with LightDM grabbing the display.
