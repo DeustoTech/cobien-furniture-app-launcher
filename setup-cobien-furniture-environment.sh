@@ -51,7 +51,7 @@ DISPLAY_MODE="${COBIEN_DISPLAY_MODE:-1920x1200}"
 DISPLAY_ROTATION="${COBIEN_DISPLAY_ROTATION:-inverted}"
 DISABLE_SYSTEM_SLEEP="${COBIEN_DISABLE_SYSTEM_SLEEP:-1}"
 NON_INTERACTIVE="${COBIEN_NON_INTERACTIVE:-0}"
-AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-1}"
+AUTO_CONFIRM="${COBIEN_AUTO_CONFIRM:-0}"
 MASTER_ENV_FILE="${COBIEN_MASTER_ENV_FILE:-}"
 FETCH_CONFIG_ONLINE="${COBIEN_FETCH_CONFIG_ONLINE:-0}"
 ADMIN_BASE_URL="${COBIEN_ADMIN_BASE_URL:-https://portal.co-bien.eu}"
@@ -752,9 +752,8 @@ fetch_online_master_env_file() {
         return 0
     fi
 
-    if confirm "Do you want to fetch the furniture configuration online from the CoBien admin?"; then
+    # Auto-fetch configuration (default yes)
         _download_env_from_portal || true
-    fi
 }
 
 run_cmd() {
@@ -1688,9 +1687,9 @@ disable_cloud_init() {
     # It is not needed on CoBien furniture devices.
     if dpkg -l cloud-init >/dev/null 2>&1 || systemctl list-unit-files cloud-init.service >/dev/null 2>&1; then
         log INFO "Disabling cloud-init to avoid boot delays and console interference."
-        sudo touch /etc/cloud/cloud-init.disabled 2>/dev/null || true
-        sudo systemctl disable cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true
-        sudo systemctl mask cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true
+        if [[ $EUID -ne 0 ]]; then sudo -n touch /etc/cloud/cloud-init.disabled 2>/dev/null || true; else touch /etc/cloud/cloud-init.disabled 2>/dev/null || true; fi
+        if [[ $EUID -ne 0 ]]; then sudo -n systemctl disable cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; else systemctl disable cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; fi
+        if [[ $EUID -ne 0 ]]; then sudo -n systemctl mask cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; else systemctl mask cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; fi
         print_status_badge OK "cloud-init disabled and masked"
     else
         log INFO "cloud-init not found; nothing to disable."
@@ -1698,8 +1697,8 @@ disable_cloud_init() {
 
     # Also mask serial-getty and text console getty on tty1 to avoid
     # conflicts with LightDM grabbing the display.
-    sudo systemctl mask serial-getty@ttyS0.service 2>/dev/null || true
-    sudo systemctl mask getty@tty1.service 2>/dev/null || true
+    if [[ $EUID -ne 0 ]]; then sudo -n systemctl mask serial-getty@ttyS0.service 2>/dev/null || true; else systemctl mask serial-getty@ttyS0.service 2>/dev/null || true; fi
+    if [[ $EUID -ne 0 ]]; then sudo -n systemctl mask getty@tty1.service 2>/dev/null || true; else systemctl mask getty@tty1.service 2>/dev/null || true; fi
 }
 
 install_rustdesk() {
@@ -2323,7 +2322,7 @@ main() {
     fi
 
     phase "Configuring the desktop session" "LightDM autologin and Openbox autostart will be prepared."
-    run_cmd "Disabling cloud-init if present" disable_cloud_init
+# run_cmd "Disabling cloud-init if present" disable_cloud_init  # Disabled to avoid crash
     run_cmd "Disabling other display managers if present" disable_other_display_managers
     run_cmd "Enabling LightDM" sudo systemctl enable lightdm
     run_cmd "Setting default target to graphical.target" sudo systemctl set-default graphical.target
