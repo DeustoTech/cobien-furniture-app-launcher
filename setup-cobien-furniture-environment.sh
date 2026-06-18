@@ -1684,15 +1684,19 @@ disable_cloud_init() {
     # cloud-init is present on Ubuntu cloud/server images and runs during
     # early boot, generating SSH keys and writing console output that
     # prevents LightDM from starting the graphical session cleanly.
-    # It is not needed on CoBien furniture devices.
-    if dpkg -l cloud-init >/dev/null 2>&1 || systemctl list-unit-files cloud-init.service >/dev/null 2>&1; then
-        log INFO "Disabling cloud-init to avoid boot delays and console interference."
-        if [[ $EUID -ne 0 ]]; then sudo -n touch /etc/cloud/cloud-init.disabled 2>/dev/null || true; else touch /etc/cloud/cloud-init.disabled 2>/dev/null || true; fi
-        if [[ $EUID -ne 0 ]]; then sudo -n systemctl disable cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; else systemctl disable cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; fi
-        if [[ $EUID -ne 0 ]]; then sudo -n systemctl mask cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; else systemctl mask cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service 2>/dev/null || true; fi
-        print_status_badge OK "cloud-init disabled and masked"
+    # It is not needed on CoBien furniture devices, so we purge it completely.
+    if dpkg -l cloud-init >/dev/null 2>&1; then
+        log INFO "Purging cloud-init to avoid boot delays and console interference."
+        if [[ $EUID -ne 0 ]]; then
+            sudo -n apt-get purge -y cloud-init 2>/dev/null || true
+            sudo -n rm -rf /etc/cloud/ /var/lib/cloud/ 2>/dev/null || true
+        else
+            apt-get purge -y cloud-init 2>/dev/null || true
+            rm -rf /etc/cloud/ /var/lib/cloud/ 2>/dev/null || true
+        fi
+        print_status_badge OK "cloud-init purged and removed"
     else
-        log INFO "cloud-init not found; nothing to disable."
+        log INFO "cloud-init not found; nothing to purge."
     fi
 
     # Also mask serial-getty and text console getty on tty1 to avoid
@@ -2322,7 +2326,7 @@ main() {
     fi
 
     phase "Configuring the desktop session" "LightDM autologin and Openbox autostart will be prepared."
-# run_cmd "Disabling cloud-init if present" disable_cloud_init  # Disabled to avoid crash
+    run_cmd "Disabling cloud-init if present" disable_cloud_init
     run_cmd "Disabling other display managers if present" disable_other_display_managers
     run_cmd "Enabling LightDM" sudo systemctl enable lightdm
     run_cmd "Setting default target to graphical.target" sudo systemctl set-default graphical.target
