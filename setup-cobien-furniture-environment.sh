@@ -2246,6 +2246,11 @@ configure_mqtt_broker_docker() {
 
     run_cmd "Creating Mosquitto config directory" mkdir -p "$config_dir"
     
+    # If mosquitto.conf exists and is a directory (created by Docker when mount source is missing), remove it.
+    if [[ -d "$config_dir/mosquitto.conf" ]]; then
+        rm -rf "$config_dir/mosquitto.conf"
+    fi
+
     # Write mosquitto.conf
     run_cmd "Writing Mosquitto configuration" bash -c "cat << 'EOF' > '$config_dir/mosquitto.conf'
 listener 1883
