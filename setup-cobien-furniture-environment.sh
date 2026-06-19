@@ -391,7 +391,7 @@ choose_master_env_file() {
             log WARN "No local configuration was found and non-interactive mode is active."
             return 0
         fi
-        if confirm "No local configuration was found. Do you want to download a new configuration from the CoBien admin portal?"; then
+        if confirm "No local configuration was found. Do you want to download a new configuration from the CoBien admin portal?" "Y"; then
             _download_env_from_portal && return 0
         fi
         log WARN "No deployment env was selected. Continuing without preselecting a deployment env."
@@ -508,15 +508,27 @@ preflight_checks() {
 
 confirm() {
     local prompt="$1"
+    local default="${2:-N}"
     if [[ "$NON_INTERACTIVE" == "1" || "$AUTO_CONFIRM" == "1" ]]; then
         return 0
     fi
     while true; do
-        printf '%b[CONFIRM]%b %s [y/N]: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+        if [[ "${default,,}" == "y" ]]; then
+            printf '%b[CONFIRM]%b %s [Y/n]: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+        else
+            printf '%b[CONFIRM]%b %s [y/N]: ' "$COLOR_YELLOW" "$COLOR_RESET" "$prompt"
+        fi
         read -r answer
         case "${answer,,}" in
             y|yes) return 0 ;;
-            n|no|"") return 1 ;;
+            n|no) return 1 ;;
+            "")
+                if [[ "${default,,}" == "y" ]]; then
+                    return 0
+                else
+                    return 1
+                fi
+                ;;
         esac
     done
 }
@@ -1768,7 +1780,9 @@ install_rustdesk() {
         return 1
     fi
 
-    print_status_badge OK "RustDesk ${RUSTDESK_VERSION} installed"
+    run_cmd "Configuring RustDesk permanent password" sudo rustdesk --password cobien
+
+    print_status_badge OK "RustDesk ${RUSTDESK_VERSION} installed and password set to 'cobien'"
 }
 
 install_systemd_user_units() {
