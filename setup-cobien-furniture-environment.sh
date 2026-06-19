@@ -1697,7 +1697,11 @@ disable_cloud_init() {
     # if found — no apt-get purge needed, no process killing, no blocking.
 
     # Create the official "disabled" marker recognized by cloud-init itself.
-    touch /etc/cloud/cloud-init.disabled 2>/dev/null || true
+    if [[ $EUID -ne 0 ]]; then
+        sudo touch /etc/cloud/cloud-init.disabled 2>/dev/null || true
+    else
+        touch /etc/cloud/cloud-init.disabled 2>/dev/null || true
+    fi
 
     # Mask the systemd units so they cannot start on boot even if the marker
     # is somehow removed or the cloud-init package is reinstalled later.
@@ -1711,7 +1715,7 @@ disable_cloud_init() {
     )
     for _unit in "${_ci_units[@]}"; do
         if [[ $EUID -ne 0 ]]; then
-            sudo -n systemctl mask "$_unit" 2>/dev/null || true
+            sudo systemctl mask "$_unit" 2>/dev/null || true
         else
             systemctl mask "$_unit" 2>/dev/null || true
         fi
@@ -1721,8 +1725,8 @@ disable_cloud_init() {
 
     # Also mask serial-getty and text console getty on tty1 to avoid
     # conflicts with LightDM grabbing the display.
-    if [[ $EUID -ne 0 ]]; then sudo -n systemctl mask serial-getty@ttyS0.service 2>/dev/null || true; else systemctl mask serial-getty@ttyS0.service 2>/dev/null || true; fi
-    if [[ $EUID -ne 0 ]]; then sudo -n systemctl mask getty@tty1.service 2>/dev/null || true; else systemctl mask getty@tty1.service 2>/dev/null || true; fi
+    if [[ $EUID -ne 0 ]]; then sudo systemctl mask serial-getty@ttyS0.service 2>/dev/null || true; else systemctl mask serial-getty@ttyS0.service 2>/dev/null || true; fi
+    if [[ $EUID -ne 0 ]]; then sudo systemctl mask getty@tty1.service 2>/dev/null || true; else systemctl mask getty@tty1.service 2>/dev/null || true; fi
 }
 
 install_rustdesk() {
@@ -2308,6 +2312,24 @@ main() {
     clear 2>/dev/null || true
     print_banner
     print_intro_panel
+
+    # Wait for cloud-init to finish its initial boot (if running) and disable it immediately
+    # to prevent locked apt/dpkg databases or unexpected system reboots mid-installation.
+    if command -v cloud-init >/dev/null 2>&1; then
+        log INFO "Checking if cloud-init is active..."
+        local ci_status
+        ci_status="$(cloud-init status 2>/dev/null || true)"
+        if [[ "$ci_status" != *"disabled"* && "$ci_status" != *"error"* ]]; then
+            log INFO "Waiting for cloud-init to finish its initial VM configurations..."
+            if [[ $EUID -ne 0 ]]; then
+                sudo cloud-init status --wait || true
+            else
+                cloud-init status --wait || true
+            fi
+        fi
+    fi
+    disable_cloud_init
+
     choose_master_env_file
     load_selected_env_settings
     print_preflight_snapshot
