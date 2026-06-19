@@ -1648,7 +1648,6 @@ EOF
     sudo chmod 0644 /etc/systemd/logind.conf.d/50-cobien-kiosk.conf || true
 
     sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
-    sudo systemctl restart systemd-logind >/dev/null 2>&1 || true
 
     print_status_badge OK "Suspend, hibernate and idle sleep disabled for kiosk mode"
     print_status_badge OK "Openbox sessions will disable DPMS and screen blanking"
