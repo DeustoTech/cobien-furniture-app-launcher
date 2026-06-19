@@ -2015,6 +2015,7 @@ run_launcher_setup_mode() {
 }
 
 finalize_with_reboot() {
+    fix_target_runtime_ownership
     echo
     print_rule
     printf '%b%s%b\n' "$COLOR_BOLD$COLOR_BLUE" "The furniture is fully prepared." "$COLOR_RESET"
