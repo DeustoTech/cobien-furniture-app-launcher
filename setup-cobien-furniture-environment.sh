@@ -1781,6 +1781,8 @@ install_rustdesk() {
     fi
 
     run_cmd "Configuring RustDesk permanent password" sudo rustdesk --password cobien
+    run_cmd "Configuring RustDesk verification method" sudo rustdesk --option verification-method use-both-passwords
+    run_cmd "Configuring RustDesk approve mode" sudo rustdesk --option approve-mode password
 
     print_status_badge OK "RustDesk ${RUSTDESK_VERSION} installed and password set to 'cobien'"
 }
