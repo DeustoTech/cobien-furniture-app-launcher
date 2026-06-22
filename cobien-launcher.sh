@@ -1380,6 +1380,7 @@ launch_runtime() {
   resolve_uv_bin
   _heal_venv_permissions
   mkdir -p "$LOG_DIR"
+  configure_rustdesk_if_present
   animate_status "Starting runtime services"
   ensure_mosquitto_running
   clear_launcher_stop_request
@@ -3033,6 +3034,18 @@ import stat
 config_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 PY
     log "Audio: synced microphone_device in unified config with launcher env"
+  fi
+}
+
+configure_rustdesk_if_present() {
+  if command -v rustdesk >/dev/null 2>&1; then
+    log "RustDesk: Configuring permanent password and verification method..."
+    echo cobien | sudo -S rustdesk --password cobien >/dev/null 2>&1 || true
+    echo cobien | sudo -S rustdesk --option verification-method use-permanent-password >/dev/null 2>&1 || true
+    echo cobien | sudo -S rustdesk --option approve-mode password >/dev/null 2>&1 || true
+    log "RustDesk: Configuration applied."
+  else
+    log "RustDesk: rustdesk binary not found, skipping configuration"
   fi
 }
 
