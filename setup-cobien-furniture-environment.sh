@@ -94,7 +94,7 @@ COLOR_ACCENT=""
 
 CURRENT_PHASE="bootstrap"
 STEP_INDEX=0
-STEP_TOTAL=12
+STEP_TOTAL=13
 ONLINE_ENV_FETCHED=0
 LEGACY_CLEANUP_PATHS=()
 LEGACY_CLEANUP_REASONS=()
@@ -1643,6 +1643,43 @@ EOF
     chown -R "$TARGET_USER:$TARGET_USER" "$USER_HOME/.config/openbox" "$USER_HOME/.config/cobien" "$USER_HOME/.config/dunst" "$USER_HOME/.xbindkeysrc" 2>/dev/null || true
 }
 
+# ---------------------------------------------------------------------------
+# WiFi — add the CoBien access-point as a stored NetworkManager profile so
+# the device auto-connects whenever it is in range.
+# ---------------------------------------------------------------------------
+configure_cobien_wifi() {
+    local SSID="cobien"
+    local PASSWORD="Cobien2026"
+    local CON_NAME="cobien-wifi"
+
+    if ! command -v nmcli &>/dev/null; then
+        log WARN "nmcli not found — skipping WiFi profile configuration."
+        return 0
+    fi
+
+    # Remove any previous profile with the same name to avoid duplicates
+    if nmcli connection show "$CON_NAME" &>/dev/null; then
+        sudo nmcli connection delete "$CON_NAME" >/dev/null 2>&1 || true
+        log OK "Removed existing WiFi profile '${CON_NAME}'."
+    fi
+
+    # Add the WPA2-Personal profile (hidden=no, autoconnect=yes)
+    sudo nmcli connection add \
+        type wifi \
+        con-name "$CON_NAME" \
+        ifname "*" \
+        ssid "$SSID" \
+        -- \
+        wifi-sec.key-mgmt wpa-psk \
+        wifi-sec.psk "$PASSWORD" \
+        connection.autoconnect yes \
+        connection.autoconnect-priority 10 \
+        ipv4.method auto \
+        ipv6.method auto
+
+    print_status_badge OK "WiFi profile '${SSID}' stored (auto-connect enabled)."
+}
+
 configure_kiosk_power_management() {
     if [[ "$DISABLE_SYSTEM_SLEEP" != "1" ]]; then
         log INFO "Kiosk power-management lock is disabled by configuration."
@@ -2366,6 +2403,9 @@ main() {
 
     phase "Installing system packages" "Openbox, LightDM, audio stack and display helpers will be verified and installed only when missing."
     install_missing_bootstrap_packages
+
+    phase "Configuring CoBien WiFi network" "Storing the 'cobien' WiFi profile so the device auto-connects whenever the network is in range."
+    configure_cobien_wifi
 
     phase "Preparing workspace and MQTT broker" "The furniture workspace and local Docker MQTT broker will be prepared."
     run_cmd "Creating workspace directory" mkdir -p "$PROJECT_DIR"
