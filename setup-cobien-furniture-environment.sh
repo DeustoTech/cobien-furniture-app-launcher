@@ -1561,10 +1561,21 @@ apply_touch_rotation() {
         return 0
     fi
 
+    local is_vm="false"
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        if systemd-detect-virt --quiet; then
+            is_vm="true"
+        fi
+    fi
+
     printf '%s\n' "\$touch_ids" | while IFS= read -r touch_id; do
         [ -n "\$touch_id" ] || continue
-        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=\$display_output rotation=\$display_rotation" >>/tmp/cobien-touchscreen.log
-        xinput map-to-output "\$touch_id" "\$display_output" >>/tmp/cobien-touchscreen.log 2>&1 || true
+        echo "[apply_touch_rotation] Configuring touch id=\$touch_id output=\$display_output rotation=\$display_rotation (is_vm=\$is_vm)" >>/tmp/cobien-touchscreen.log
+        if [ "\$is_vm" = "true" ]; then
+            xinput map-to-output "\$touch_id" "all" >>/tmp/cobien-touchscreen.log 2>&1 || true
+        else
+            xinput map-to-output "\$touch_id" "\$display_output" >>/tmp/cobien-touchscreen.log 2>&1 || true
+        fi
         read -ra mat_arr <<< "\$matrix"
         xinput set-prop "\$touch_id" 'Coordinate Transformation Matrix' "\${mat_arr[@]}" >>/tmp/cobien-touchscreen.log 2>&1 || true
     done
