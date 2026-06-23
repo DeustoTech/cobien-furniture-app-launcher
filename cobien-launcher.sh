@@ -55,9 +55,9 @@ IDLE_TIMEOUT_SEC="${COBIEN_IDLE_TIMEOUT_SEC:-60}"
 NOTIFICATIONS_JSON="${COBIEN_NOTIFICATIONS_JSON:-}"
 BACKEND_BASE_URL="${COBIEN_BACKEND_BASE_URL:-https://portal.co-bien.eu}"
 DEVICE_POLL_URL="${COBIEN_DEVICE_POLL_URL:-}"
-DEVICE_POLL_INTERVAL_SEC="${COBIEN_DEVICE_POLL_INTERVAL_SEC:-5}"
+DEVICE_POLL_INTERVAL_SEC="${COBIEN_DEVICE_POLL_INTERVAL_SEC:-15}"
 DEVICE_HEARTBEAT_URL="${COBIEN_DEVICE_HEARTBEAT_URL:-}"
-DEVICE_HEARTBEAT_INTERVAL_SEC="${COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC:-60}"
+DEVICE_HEARTBEAT_INTERVAL_SEC="${COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC:-300}"
 OWM_API_KEY="${OWM_API_KEY:-}"
 NEWS_API_KEY="${NEWS_API_KEY:-}"
 MONGO_URI="${MONGO_URI:-}"
@@ -2712,7 +2712,7 @@ data = {
         "mqtt_local_port": env_int("COBIEN_MQTT_LOCAL_PORT", 1883),
         "backend_base_url": env("COBIEN_BACKEND_BASE_URL", "https://portal.co-bien.eu"),
         "device_poll_url": env("COBIEN_DEVICE_POLL_URL", "https://portal.co-bien.eu/pizarra/api/device/poll/"),
-        "device_poll_interval_sec": env_int("COBIEN_DEVICE_POLL_INTERVAL_SEC", 5),
+        "device_poll_interval_sec": env_int("COBIEN_DEVICE_POLL_INTERVAL_SEC", 15),
         "owm_api_key": env("OWM_API_KEY", ""),
         "news_api_key": env("NEWS_API_KEY", ""),
         "mongo_uri": env("MONGO_URI", ""),
@@ -2743,7 +2743,7 @@ data = {
         "pizarra_delete_url_template": env("COBIEN_PIZARRA_DELETE_URL_TEMPLATE", "https://portal.co-bien.eu/pizarra/api/messages/{post_id}/delete/"),
         "contacts_api_url": env("COBIEN_CONTACTS_API_URL", "https://portal.co-bien.eu/pizarra/api/contacts/"),
         "device_heartbeat_url": env("COBIEN_DEVICE_HEARTBEAT_URL", "https://portal.co-bien.eu/pizarra/api/devices/heartbeat/"),
-        "device_heartbeat_interval_sec": env_int("COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC", 60),
+        "device_heartbeat_interval_sec": env_int("COBIEN_DEVICE_HEARTBEAT_INTERVAL_SEC", 300),
         "icso_telemetry_url": env("COBIEN_ICSO_TELEMETRY_URL", "https://portal.co-bien.eu/pizarra/api/icso/telemetry/"),
         "icso_events_url": env("COBIEN_ICSO_EVENTS_URL", "https://portal.co-bien.eu/pizarra/api/icso/events/"),
         "portal_videocall_url": env("COBIEN_PORTAL_VIDEOCALL_URL", "https://portal.co-bien.eu/videocall/"),
