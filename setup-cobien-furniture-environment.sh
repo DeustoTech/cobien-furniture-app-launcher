@@ -1745,6 +1745,33 @@ disable_other_display_managers() {
     sudo systemctl disable sddm 2>/dev/null || true
 }
 
+disable_spice_vdagent_on_vm() {
+    local is_vm="false"
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        if systemd-detect-virt --quiet; then
+            is_vm="true"
+        fi
+    fi
+
+    if [[ "$is_vm" == "true" ]]; then
+        log INFO "Virtual machine detected. Disabling and masking spice-vdagentd to prevent cursor/touch desync."
+        if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl stop spice-vdagentd.service spice-vdagentd.socket 2>/dev/null || true
+            sudo systemctl disable spice-vdagentd.service spice-vdagentd.socket 2>/dev/null || true
+            sudo systemctl mask spice-vdagentd.service spice-vdagentd.socket 2>/dev/null || true
+        fi
+
+        local user_autostart_dir="/home/${TARGET_USER}/.config/autostart"
+        mkdir -p "$user_autostart_dir"
+        if [ -f /etc/xdg/autostart/spice-vdagent.desktop ]; then
+            cp /etc/xdg/autostart/spice-vdagent.desktop "$user_autostart_dir/"
+            echo "Hidden=true" >> "$user_autostart_dir/spice-vdagent.desktop"
+            chown -R "${TARGET_USER}:${TARGET_USER}" "$user_autostart_dir" 2>/dev/null || true
+        fi
+    fi
+}
+
+
 disable_cloud_init() {
     # cloud-init is a cloud VM initialization tool that sometimes runs during
     # the first boot of a fresh Ubuntu install, generating SSH keys and writing
@@ -2443,6 +2470,8 @@ main() {
     phase "Configuring the desktop session" "LightDM autologin and Openbox autostart will be prepared."
     run_cmd "Disabling cloud-init if present" disable_cloud_init
     run_cmd "Disabling other display managers if present" disable_other_display_managers
+    run_cmd "Disabling spice-vdagent if running in a VM" disable_spice_vdagent_on_vm
+
     run_cmd "Enabling LightDM" sudo systemctl enable --force lightdm
     run_cmd "Setting default target to graphical.target" sudo systemctl set-default graphical.target
     run_cmd "Writing LightDM autologin" write_lightdm_config
