@@ -3407,7 +3407,10 @@ update_repo_if_needed() {
   fi
 
   log "Checking changes in $repo"
-  git -C "$repo" fetch "$REMOTE_NAME" "$BRANCH_NAME" --quiet
+  if ! git -C "$repo" fetch "$REMOTE_NAME" "$BRANCH_NAME" --quiet; then
+    log "Failed to fetch updates for $repo (offline?)"
+    return 1
+  fi
   local_sha="$(git -C "$repo" rev-parse HEAD)"
   remote_sha="$(git -C "$repo" rev-parse FETCH_HEAD)"
 
