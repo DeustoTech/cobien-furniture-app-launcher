@@ -1381,6 +1381,7 @@ launch_runtime() {
   _heal_venv_permissions
   mkdir -p "$LOG_DIR"
   configure_rustdesk_if_present
+  configure_system_dns_if_needed
   animate_status "Starting runtime services"
   ensure_mosquitto_running
   clear_launcher_stop_request
@@ -3047,6 +3048,29 @@ configure_rustdesk_if_present() {
   else
     log "RustDesk: rustdesk binary not found, skipping configuration"
   fi
+}
+
+configure_system_dns_if_needed() {
+  local dns_file="/etc/systemd/resolved.conf.d/50-cobien-dns.conf"
+  if [[ -f "$dns_file" ]] && grep -q "DNS=8.8.8.8 1.1.1.1" "$dns_file"; then
+    log "DNS: system DNS resolver is already configured correctly."
+    return 0
+  fi
+
+  log "DNS: Configuring public DNS servers (8.8.8.8, 1.1.1.1)..."
+  local tmp_dns="/tmp/50-cobien-dns.conf"
+  cat > "$tmp_dns" <<'EOF'
+[Resolve]
+DNS=8.8.8.8 1.1.1.1
+FallbackDNS=8.8.4.4 1.0.0.1
+EOF
+
+  echo cobien | sudo -S mkdir -p /etc/systemd/resolved.conf.d >/dev/null 2>&1 || true
+  echo cobien | sudo -S cp "$tmp_dns" "$dns_file" >/dev/null 2>&1 || true
+  echo cobien | sudo -S chmod 0644 "$dns_file" >/dev/null 2>&1 || true
+  echo cobien | sudo -S systemctl restart systemd-resolved >/dev/null 2>&1 || true
+  rm -f "$tmp_dns"
+  log "DNS: Configuration applied and systemd-resolved restarted."
 }
 
 ensure_mosquitto_running() {

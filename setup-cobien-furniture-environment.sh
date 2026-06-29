@@ -1713,6 +1713,25 @@ EOF
     print_status_badge OK "Openbox sessions will disable DPMS and screen blanking"
 }
 
+configure_system_dns() {
+    log INFO "Configuring system DNS resolver policy..."
+
+    sudo mkdir -p /etc/systemd/resolved.conf.d
+    sudo tee /etc/systemd/resolved.conf.d/50-cobien-dns.conf > /dev/null <<EOF
+[Resolve]
+DNS=8.8.8.8 1.1.1.1
+FallbackDNS=8.8.4.4 1.0.0.1
+EOF
+    sudo chmod 0644 /etc/systemd/resolved.conf.d/50-cobien-dns.conf || true
+
+    if command -v systemctl >/dev/null 2>&1; then
+        sudo systemctl restart systemd-resolved >/dev/null 2>&1 || true
+        print_status_badge OK "System DNS configured to use Google (8.8.8.8) and Cloudflare (1.1.1.1)"
+    else
+        log WARN "systemctl not found — skipping systemd-resolved restart."
+    fi
+}
+
 write_lightdm_config() {
     sudo mkdir -p /etc/lightdm/lightdm.conf.d
     sudo tee /etc/lightdm/lightdm.conf.d/50-autologin.conf > /dev/null <<EOF
@@ -2477,6 +2496,7 @@ main() {
     run_cmd "Writing LightDM autologin" write_lightdm_config
     run_cmd "Writing Openbox autostart" write_openbox_autostart
     run_cmd "Applying kiosk power policy" configure_kiosk_power_management
+    run_cmd "Applying DNS resolver policy" configure_system_dns
 
     phase "Validating the graphical session" "Checking that the Openbox session entry is installed and ready."
     if [ ! -f /usr/share/xsessions/openbox.desktop ]; then
