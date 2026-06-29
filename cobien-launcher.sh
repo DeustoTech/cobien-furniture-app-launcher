@@ -3052,24 +3052,41 @@ configure_rustdesk_if_present() {
 
 configure_system_dns_if_needed() {
   local dns_file="/etc/systemd/resolved.conf.d/50-cobien-dns.conf"
+  local dns_ok="0"
   if [[ -f "$dns_file" ]] && grep -q "DNS=8.8.8.8 1.1.1.1" "$dns_file"; then
-    log "DNS: system DNS resolver is already configured correctly."
+    dns_ok="1"
+  fi
+
+  local gai_ok="0"
+  if grep -E "^precedence ::ffff:0:0/96" /etc/gai.conf >/dev/null 2>&1; then
+    gai_ok="1"
+  fi
+
+  if [[ "$dns_ok" == "1" && "$gai_ok" == "1" ]]; then
+    log "DNS: system DNS and IPv4 preference are already configured correctly."
     return 0
   fi
 
-  log "DNS: Configuring public DNS servers (8.8.8.8, 1.1.1.1)..."
-  local tmp_dns="/tmp/50-cobien-dns.conf"
-  cat > "$tmp_dns" <<'EOF'
+  log "DNS: Configuring public DNS servers (8.8.8.8, 1.1.1.1) and IPv4 preference..."
+
+  if [[ "$dns_ok" == "0" ]]; then
+    local tmp_dns="/tmp/50-cobien-dns.conf"
+    cat > "$tmp_dns" <<'EOF'
 [Resolve]
 DNS=8.8.8.8 1.1.1.1
 FallbackDNS=8.8.4.4 1.0.0.1
 EOF
+    echo cobien | sudo -S mkdir -p /etc/systemd/resolved.conf.d >/dev/null 2>&1 || true
+    echo cobien | sudo -S cp "$tmp_dns" "$dns_file" >/dev/null 2>&1 || true
+    echo cobien | sudo -S chmod 0644 "$dns_file" >/dev/null 2>&1 || true
+    rm -f "$tmp_dns"
+  fi
 
-  echo cobien | sudo -S mkdir -p /etc/systemd/resolved.conf.d >/dev/null 2>&1 || true
-  echo cobien | sudo -S cp "$tmp_dns" "$dns_file" >/dev/null 2>&1 || true
-  echo cobien | sudo -S chmod 0644 "$dns_file" >/dev/null 2>&1 || true
+  if [[ "$gai_ok" == "0" ]]; then
+    echo cobien | sudo -S sh -c "echo 'precedence ::ffff:0:0/96  100' >> /etc/gai.conf" >/dev/null 2>&1 || true
+  fi
+
   echo cobien | sudo -S systemctl restart systemd-resolved >/dev/null 2>&1 || true
-  rm -f "$tmp_dns"
   log "DNS: Configuration applied and systemd-resolved restarted."
 }
 

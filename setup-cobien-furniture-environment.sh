@@ -1724,9 +1724,17 @@ FallbackDNS=8.8.4.4 1.0.0.1
 EOF
     sudo chmod 0644 /etc/systemd/resolved.conf.d/50-cobien-dns.conf || true
 
+    # Configure IPv4 preference over IPv6 globally to prevent timeouts on networks with broken IPv6 routing
+    if [ -f /etc/gai.conf ]; then
+        if ! grep -E "^precedence ::ffff:0:0/96" /etc/gai.conf >/dev/null 2>&1; then
+            log INFO "Configuring IPv4 precedence in /etc/gai.conf..."
+            echo "precedence ::ffff:0:0/96  100" | sudo tee -a /etc/gai.conf >/dev/null || true
+        fi
+    fi
+
     if command -v systemctl >/dev/null 2>&1; then
         sudo systemctl restart systemd-resolved >/dev/null 2>&1 || true
-        print_status_badge OK "System DNS configured to use Google (8.8.8.8) and Cloudflare (1.1.1.1)"
+        print_status_badge OK "System DNS configured to use Google (8.8.8.8) and Cloudflare (1.1.1.1) with IPv4 preference"
     else
         log WARN "systemctl not found — skipping systemd-resolved restart."
     fi
