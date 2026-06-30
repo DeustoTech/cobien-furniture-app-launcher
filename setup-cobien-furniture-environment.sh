@@ -1661,7 +1661,7 @@ EOF
 configure_cobien_wifi() {
     local SSID="cobien"
     local PASSWORD="Cobien2026"
-    local CON_NAME="cobien-wifi"
+    local CON_NAME="cobien"
 
     if ! command -v nmcli &>/dev/null; then
         log WARN "nmcli not found — skipping WiFi profile configuration."
