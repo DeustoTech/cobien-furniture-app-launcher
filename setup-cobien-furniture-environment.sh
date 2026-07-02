@@ -1965,9 +1965,6 @@ Restart=always
 RestartSec=5
 KillMode=mixed
 TimeoutStopSec=20
-
-[Install]
-WantedBy=default.target
 EOF
 
     cat > "$LAUNCHER_REPO_DIR/systemd/cobien-update.service" <<'EOF'
@@ -2021,9 +2018,6 @@ Restart=always
 RestartSec=5
 KillMode=mixed
 TimeoutStopSec=20
-
-[Install]
-WantedBy=default.target
 EOF
 
     cat > "$systemd_user_dir/cobien-update.service" <<EOF
