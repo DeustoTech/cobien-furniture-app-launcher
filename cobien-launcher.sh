@@ -722,7 +722,19 @@ stop_systemd_user_launcher_supervision() {
 
   log "Stopping systemd user launcher supervision before manual relaunch."
   systemctl --user stop cobien-update.timer >/dev/null 2>&1 || true
-  systemctl --user stop cobien-update.service >/dev/null 2>&1 || true
+
+  local in_update_service="0"
+  if [[ "${SYSTEMD_UNIT:-}" == "cobien-update.service" ]]; then
+    in_update_service="1"
+  fi
+  if [[ -f /proc/self/cgroup ]] && grep -q "cobien-update.service" /proc/self/cgroup; then
+    in_update_service="1"
+  fi
+
+  if [[ "$in_update_service" == "0" ]]; then
+    systemctl --user stop cobien-update.service >/dev/null 2>&1 || true
+  fi
+
   systemctl --user stop cobien-launcher.service >/dev/null 2>&1 || true
   sleep 1
   return 0
