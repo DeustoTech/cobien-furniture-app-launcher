@@ -701,6 +701,16 @@ is_running_inside_systemd_user_service() {
   [[ -n "${INVOCATION_ID:-}" ]]
 }
 
+is_running_inside_launcher_service() {
+  if [[ "${SYSTEMD_UNIT:-}" == "cobien-launcher.service" ]]; then
+    return 0
+  fi
+  if [[ -f /proc/self/cgroup ]] && grep -q "cobien-launcher.service" /proc/self/cgroup; then
+    return 0
+  fi
+  return 1
+}
+
 has_active_systemd_user_launcher_service() {
   command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet cobien-launcher.service
 }
@@ -3565,9 +3575,47 @@ run_update_once() {
   log_phase_banner "Repository update" "Refreshing launcher, cobien-furniture-electron and cobien_MQTT_Dictionnary before continuing with the runtime."
   log "Preparing update handoff: ensuring only one launcher/runtime instance remains before updating."
 
-  if ! is_running_inside_systemd_user_service && has_active_systemd_user_launcher_service; then
+  local needs_update="0"
+  if ! is_running_inside_launcher_service && has_active_systemd_user_launcher_service; then
+    log "Checking for pending repository updates before stopping active runtime..."
+    # Check launcher repo
+    timeout 10 git -C "$LAUNCHER_ROOT" fetch "$REMOTE_NAME" "$BRANCH_NAME" --quiet || true
+    local l_local l_remote
+    l_local="$(git -C "$LAUNCHER_ROOT" rev-parse HEAD 2>/dev/null || echo 1)"
+    l_remote="$(git -C "$LAUNCHER_ROOT" rev-parse FETCH_HEAD 2>/dev/null || echo 1)"
+    if [[ "$l_local" != "$l_remote" ]]; then
+      needs_update="1"
+    fi
+
+    # Check frontend repo
+    timeout 10 git -C "$FRONTEND_REPO" fetch "$REMOTE_NAME" "$BRANCH_NAME" --quiet || true
+    local f_local f_remote
+    f_local="$(git -C "$FRONTEND_REPO" rev-parse HEAD 2>/dev/null || echo 2)"
+    f_remote="$(git -C "$FRONTEND_REPO" rev-parse FETCH_HEAD 2>/dev/null || echo 2)"
+    if [[ "$f_local" != "$f_remote" ]]; then
+      needs_update="1"
+    fi
+
+    # Check MQTT repo
+    timeout 10 git -C "$MQTT_REPO" fetch "$REMOTE_NAME" "$BRANCH_NAME" --quiet || true
+    local m_local m_remote
+    m_local="$(git -C "$MQTT_REPO" rev-parse HEAD 2>/dev/null || echo 3)"
+    m_remote="$(git -C "$MQTT_REPO" rev-parse FETCH_HEAD 2>/dev/null || echo 3)"
+    if [[ "$m_local" != "$m_remote" ]]; then
+      needs_update="1"
+    fi
+
+    if [[ "$needs_update" == "0" && "$manual_reload_requested" == "0" ]]; then
+      log "No repository changes found and no manual reload requested. Skipping update check to preserve running app."
+      return 0
+    fi
+
+    log "Pending updates found or manual reload requested. Stopping active launcher supervision and runtime..."
+    stop_systemd_user_launcher_supervision || true
+  elif ! is_running_inside_systemd_user_service && has_active_systemd_user_launcher_service; then
     stop_systemd_user_launcher_supervision || true
   fi
+
   stop_all_other_launcher_processes || true
   wait_for_no_other_launcher_processes 10 || true
   stop_runtime_processes
