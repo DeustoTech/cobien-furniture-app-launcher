@@ -3005,12 +3005,12 @@ configure_audio_input_defaults() {
   fi
 
   local usb_card hda_source fallback_source
-  usb_card="$(pactl list short cards 2>/dev/null | awk 'tolower($0) ~ /usb/ {print $2; exit}')"
-  hda_source="$(pactl list short sources 2>/dev/null | awk 'tolower($0) ~ /hda|pci/ && tolower($0) ~ /input/ {print $2; exit}')"
-  fallback_source="$(pactl list short sources 2>/dev/null | awk 'tolower($0) ~ /input/ && tolower($0) !~ /usb/ {print $2; exit}')"
+  usb_card="$( (timeout 2 pactl list short cards 2>/dev/null || true) | awk 'tolower($0) ~ /usb/ {print $2; exit}')"
+  hda_source="$( (timeout 2 pactl list short sources 2>/dev/null || true) | awk 'tolower($0) ~ /hda|pci/ && tolower($0) ~ /input/ {print $2; exit}')"
+  fallback_source="$( (timeout 2 pactl list short sources 2>/dev/null || true) | awk 'tolower($0) ~ /input/ && tolower($0) !~ /usb/ {print $2; exit}')"
 
   if [[ -n "$usb_card" ]]; then
-    if pactl set-card-profile "$usb_card" output:analog-stereo >/dev/null 2>&1; then
+    if timeout 2 pactl set-card-profile "$usb_card" output:analog-stereo >/dev/null 2>&1; then
       log "Audio: set USB card '$usb_card' profile to output:analog-stereo"
     else
       log "Audio: could not set USB profile on '$usb_card'"
@@ -3020,13 +3020,13 @@ configure_audio_input_defaults() {
   fi
 
   if [[ -n "$hda_source" ]]; then
-    if pactl set-default-source "$hda_source" >/dev/null 2>&1; then
+    if timeout 2 pactl set-default-source "$hda_source" >/dev/null 2>&1; then
       log "Audio: default input source set to '$hda_source'"
     else
       log "Audio: could not set default source '$hda_source'"
     fi
   elif [[ -n "$fallback_source" ]]; then
-    if pactl set-default-source "$fallback_source" >/dev/null 2>&1; then
+    if timeout 2 pactl set-default-source "$fallback_source" >/dev/null 2>&1; then
       log "Audio: default input source set to fallback '$fallback_source'"
     else
       log "Audio: could not set fallback source '$fallback_source'"
