@@ -4410,7 +4410,7 @@ main() {
           setup_environment
           ;;
         update-once)
-          run_update_once launch
+          run_update_once update-once
           ;;
         run)
           ;;
@@ -4422,7 +4422,7 @@ main() {
       setup_environment
       ;;
     update-once)
-      run_update_once launch
+      run_update_once update-once
       ;;
     watch)
       run_watch_loop
