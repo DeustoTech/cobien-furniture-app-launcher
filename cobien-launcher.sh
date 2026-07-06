@@ -3488,6 +3488,7 @@ update_repo_if_needed() {
   fi
 
   log "Updating $repo"
+  git -C "$repo" reset --hard HEAD --quiet
   git -C "$repo" pull --ff-only "$REMOTE_NAME" "$BRANCH_NAME"
 
   if [[ "$launcher_changed" == "1" ]]; then
