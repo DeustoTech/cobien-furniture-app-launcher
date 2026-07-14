@@ -3662,6 +3662,10 @@ run_update_once() {
     restart_software 1
   else
     log "No changes to deploy"
+    if has_systemd_user_launcher_service && ! has_active_systemd_user_launcher_service; then
+      log "Launcher service is inactive but no updates were applied. Restarting service to restore runtime..."
+      restart_systemd_user_launcher_service
+    fi
   fi
 }
 
