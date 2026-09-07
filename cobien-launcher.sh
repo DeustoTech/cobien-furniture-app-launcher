@@ -3494,7 +3494,11 @@ update_repo_if_needed() {
 
   log "Updating $repo"
   git -C "$repo" reset --hard HEAD --quiet
-  git -C "$repo" pull --ff-only "$REMOTE_NAME" "$BRANCH_NAME"
+  git -C "$repo" clean -fd --quiet
+  if ! git -C "$repo" pull --ff-only "$REMOTE_NAME" "$BRANCH_NAME"; then
+    log "Failed to pull updates for $repo"
+    return 1
+  fi
 
   if [[ "$launcher_changed" == "1" ]]; then
     mark_update_applied
